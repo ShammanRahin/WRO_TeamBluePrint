@@ -15,6 +15,7 @@ One line per locked decision + the REASON. Source of truth; append as things loc
 6. **"Straight" found by motion, not by eye (sweep µs, drive ~3 m, bisect gyro yaw-rate to zero → CENTER_US)** — no car is mechanically straight; gyro heading-hold finds the true straight, removing a source of randomness.
 
 7. **Sensors = analog Sharp IR (calibrated, median-filtered, mounted out of the fold-back zone) and/or front sonar; ToF rejected; LIDAR deferred** — walls are big flat perpendicular reflectors ideal for IR/sonar; ToF randomly false-detects the floor; LIDAR is heavy/tall and forces Pi 5 + Linux jitter against the determinism goal (design upper deck to accept it later).
+   - **REVISION 2026-07-12 (team override):** primary distance = **ToF VL53L1X ×5** (already on hand). This reverses the "ToF rejected" clause above. Reason: parts owned; VL53L1X is far better than the generic ToF the rejection referred to. RISK acknowledged (false floor returns on a low car) → mitigate by above-grazing-angle mount, tight ROI window, min-range + floor gating, median filter, and VALIDATE on the real mat. Sharp IR / sonar demoted to documented fallback (Sharp bought only if ToF fails on the mat). Original rejection reasoning kept above so the trade-off is on record for the journal.
 
 8. **Sensors + camera mount to the FIXED chassis, never the pivoting steering beam** — readings must not swing when the steering turns.
 

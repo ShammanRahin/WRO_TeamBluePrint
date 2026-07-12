@@ -27,9 +27,19 @@ bearings everywhere, geometry-located parts, no jumpers/breadboard, star ground.
 4. ⚠️ Corridor width in national rules (1 m or 0.6 m) — blocks geometry (R, lock, width).
 5. Actual wheel diameter — blocks odometry + R.
 
+## Update (2026-07-12) — open questions answered
+1. **Encoder:** working assumption 180 counts per WHEEL rev; Shanto to recount and correct. (placeholder)
+2. **Competition:** October (national). Exact date still needed to pin commit deadlines.
+3. **Parts:** MG90S servo (owned), VL53L1X ToF ×5 (owned), Raspberry Pi 4B 1 GB (owned), fisheye lens (owned). Sharp IR bought only if required. → BOM updated.
+4. **Corridor width:** 1 m (national). → geometry unblocked.
+5. **Wheel diameter:** free — 3D printer on hand, print any wheel. Treated as a design variable (start 45 mm).
+
+**⚠️ Conflict logged:** VL53L1X ToF reverses Decision #7's "ToF rejected". Recorded as a team override with risk + mitigation in DECISIONS.md #7 and SPECSHEET §8. Must validate on the real mat; Sharp IR/sonar kept as documented fallback.
+
 ## Next
-Answer the five open questions with measured numbers, then lock Day-1 geometry
-(wheelbase, lock, length, width, wheel dia) into SPECSHEET.md.
+Lock Day-1 geometry (wheelbase, steering lock, length, width, starting wheel dia)
+into SPECSHEET.md now that corridor = 1 m. Confirm encoder count. Get exact
+competition date to set the three commit deadlines.
 
 ## Reminder to self
 Design phase produces a justified, print-ready v1 — NOT a finished car.

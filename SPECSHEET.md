@@ -41,14 +41,16 @@ This file is a SOURCE OF TRUTH. Update it as decisions lock.
 | Parking slack | Only 0.5 × car length, ALWAYS |
 | Park manoeuvre | Reverse two-arc (rear axle is pivot → reverse tucks rear in first) |
 
-⚠️ FLAG: wheelbase, lock, length, width, wheel diameter must be set from measured parts, not guessed.
+**Locked-in inputs (2026-07-12):** National corridor width = **1 m**. Wheel diameter is **free** — Shanto has a 3D printer and prints wheels to spec, so wheel dia becomes a design variable to be chosen against R and odometry (start at 45 mm, tune).
+
+⚠️ STILL FLAGGED: wheelbase, steering lock, length, width must be set from measured/chosen parts, not guessed.
 
 ## 4. Drivetrain / motor
 
 - **Motor:** 25GA, 1331 RPM, 180 counts/rev.
-- ⚠️ MUST CONFIRM by hand-rotate test whether 180 is per WHEEL rev or per MOTOR rev.
-  - If per wheel @ 45 mm wheel: 180 ÷ (π×45) ≈ 1.3 counts/mm ≈ 0.79 mm/count — adequate for parking.
-  - If per motor rev: multiply by gear ratio — luxurious resolution.
+- **Working assumption (2026-07-12): 180 counts per WHEEL rev.** ⚠️ PLACEHOLDER — Shanto to confirm by hand-rotate test and correct if it's per motor rev.
+  - At 180/wheel rev @ 45 mm wheel: 180 ÷ (π×45) ≈ 1.3 counts/mm ≈ 0.79 mm/count — adequate for parking.
+  - If it turns out per motor rev: multiply by gear ratio — luxurious resolution.
 - 1331 RPM is fast → **cap speed in software**, especially for parking.
 
 ## 5. Navigation strategy
@@ -60,8 +62,8 @@ Modelled on the previous BD national winner's approach (fastest + smoothest).
 
 ## 6. Compute split
 
-- **Open round:** STM32 only (IR/sonar + IMU + encoder). Fully deterministic, NO Pi in the loop.
-- **Obstacle round:** adds Pi + fisheye camera for pillar colour ONLY.
+- **Open round:** STM32 only (ToF/IR/sonar + IMU + encoder). Fully deterministic, NO Pi in the loop.
+- **Obstacle round:** adds **Raspberry Pi 4B (1 GB)** + **fisheye-lens camera** for pillar colour ONLY.
 - Inter-board link = **checksummed UART**. NEVER inter-board I2C.
 - STM32 chosen over ESP32: clean 12-bit ADC (Sharp IR is analog), hardware quadrature encoder timers, deterministic timing (no WiFi stack stealing cycles).
 
@@ -69,13 +71,14 @@ Modelled on the previous BD national winner's approach (fastest + smoothest).
 
 - Single central pivot, **bell-crank** preferred over pure turntable.
 - Servo → bearing-supported steering shaft. **AS5600 magnetic encoder ON THAT SHAFT** closes the loop on TRUE wheel angle (kills servo backlash → "command 45°, get 45°" is real).
-- Digital metal-gear servo, commanded in **microseconds** (not degrees — degrees quantise ~10 µs/deg, too coarse).
+- Servo, commanded in **microseconds** (not degrees — degrees quantise ~10 µs/deg, too coarse).
+- **Part (2026-07-12): MG90S** — metal-gear (✓) but *analog* (Decision #4 wanted digital). Acceptable for v1 because the AS5600 closed loop absorbs the backlash/deadband; watch torque under bump loads and re-evaluate if holding precision drifts on the mat.
 - Ackermann rejected for v1 (4–6 slop-prone joints, worst for a novice assembler). Analyse the trade-off in the journal for rubric points instead of building it.
 
 ## 8. Sensors
 
-- Analog **Sharp IR** (calibrated voltage→mm curve, median-filter 5 samples, mount so walls never enter the fold-back zone below min range) and/or front **sonar** (walls are big flat perpendicular reflectors = ideal for sonar).
-- **ToF rejected** — randomly false-detects floor.
+- **Primary distance (2026-07-12, team choice): ToF VL53L1X ×5.** ⚠️ REVERSES the original "ToF rejected" stance (see Decision #7) — VL53L1X's known failure mode is false floor returns on a low car. Mitigation to VALIDATE on the real mat: mount above the floor grazing angle / slight upward tilt, use a tight ROI window, gate out min-range and floor-distance returns, median-filter. If false detections persist, fall back to the plan below.
+- **Documented fallback:** analog **Sharp IR** (buy only if needed; calibrated voltage→mm curve, median-filter 5 samples, mount out of the fold-back zone) and/or front **sonar** (walls are big flat perpendicular reflectors = ideal for sonar).
 - **LIDAR deferred** — design upper deck to accept it later, build v1 without it (heavy, tall, forces Pi 5 + Linux jitter, works against determinism).
 - Sensors + camera mount to the FIXED chassis, never to the pivoting steering beam (else readings swing when steering).
 
