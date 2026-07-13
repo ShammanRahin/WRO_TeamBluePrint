@@ -41,9 +41,28 @@ This file is a SOURCE OF TRUTH. Update it as decisions lock.
 | Parking slack | Only 0.5 × car length, ALWAYS |
 | Park manoeuvre | Reverse two-arc (rear axle is pivot → reverse tucks rear in first) |
 
-**Locked-in inputs (2026-07-12):** National corridor width = **1 m**. Wheel diameter is **free** — Shanto has a 3D printer and prints wheels to spec, so wheel dia becomes a design variable to be chosen against R and odometry (start at 45 mm, tune).
+**Locked-in inputs (2026-07-12):** National corridor width = **1 m**. Wheel diameter is **free** (own printer).
 
-⚠️ STILL FLAGGED: wheelbase, steering lock, length, width must be set from measured/chosen parts, not guessed.
+### LOCKED v1 geometry (2026-07-12, from optimizer — see journal/day-01)
+Objective was lowest CG / most stable, balanced against parking-width margin.
+
+| Parameter | Value | Note |
+|---|---|---|
+| Track | **120 mm** | ~63° tip-stability + real parking margin |
+| Wheelbase | **128 mm** | → turn radius **R = 128 mm** (in 110–150 band) |
+| Wheel dia | **40 mm** | low CG / clearance / odometry compromise |
+| Steering lock | **±45°** | |
+| Overall L×W×H | **175 × 138 × 95 mm** | inside 300×200×300 |
+| Target mass | **~450 g** | under 1.5 kg with margin |
+| CG height | **~28 mm** | very low; won't tip at speed |
+| Camera | mast **~90 mm**, 160° fisheye | clears the stack; covers 1 m lane a car-length ahead |
+
+Layout rules from the study: single central pivot steering (Decision #4); **mount the
+MG996R LOW** (it is 28% of the CG moment — the #1 stability lever); keep the 80 g
+battery low and in front of the motor (from WRo final v5); keep Pi 4B low. These
+values live in the Fusion global parameters. Blueprint: `media/car_blueprint.svg`.
+
+⚠️ Confirm on the mat: turn radius, parking fit, odometry (encoder count) with real parts.
 
 ## 4. Drivetrain / motor
 
@@ -72,7 +91,7 @@ Modelled on the previous BD national winner's approach (fastest + smoothest).
 - Single central pivot, **bell-crank** preferred over pure turntable.
 - Servo → bearing-supported steering shaft. **AS5600 magnetic encoder ON THAT SHAFT** closes the loop on TRUE wheel angle (kills servo backlash → "command 45°, get 45°" is real).
 - Servo, commanded in **microseconds** (not degrees — degrees quantise ~10 µs/deg, too coarse).
-- **Part (2026-07-12): MG90S** — metal-gear (✓) but *analog* (Decision #4 wanted digital). Acceptable for v1 because the AS5600 closed loop absorbs the backlash/deadband; watch torque under bump loads and re-evaluate if holding precision drifts on the mat.
+- **Part (2026-07-12, confirmed from Fusion model): MG996R** — metal-gear (✓), *analog* (Decision #4 wanted digital; AS5600 closed loop absorbs the backlash/deadband). ~10 kg·cm gives large steering-torque headroom, so torque is a non-issue. COST: heavy (~55 g) and bulky (~40×20×40 mm), and currently mounted HIGH on the chassis → raises CG. Action: lower/relocate the servo when packaging is revisited.
 - Ackermann rejected for v1 (4–6 slop-prone joints, worst for a novice assembler). Analyse the trade-off in the journal for rubric points instead of building it.
 
 ## 8. Sensors

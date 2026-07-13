@@ -5,7 +5,7 @@ Source of truth for parts. ⚠️ **Owned/buying, source, lead time, and price a
 | Part | Spec | Owned / Buying | Source | Lead time | Price |
 |---|---|---|---|---|---|
 | Drive motor | 25GA gearmotor, 1331 RPM, 180 counts/rev (encoder) | TBD | TBD (Daraz / RoboticsBD) | TBD | TBD |
-| Steering servo | **MG90S** — metal-gear, analog, µs-commanded | **Owned** | On hand | — | — |
+| Steering servo | **MG996R** — metal-gear, analog, µs-commanded, ~55 g, ~10 kg·cm | **Owned** | On hand | — | — |
 | MCU (control) | STM32 (12-bit ADC, HW quadrature timers) | TBD | TBD | TBD | TBD |
 | SBC (obstacle round only) | **Raspberry Pi 4B, 1 GB RAM** — pillar colour vision only | **Owned** | On hand | — | — |
 | Camera | **Fisheye-lens module** for Pi | **Owned** | On hand | — | — |
