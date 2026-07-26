@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.patch
+*.orig
+*.rej
+*.f3d
+*.f3z
+.DS_Store
+Thumbs.db
+venv/
+.venv/
