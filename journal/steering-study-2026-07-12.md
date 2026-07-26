@@ -120,3 +120,30 @@ Ackermann must hit <0.3° downstream slop and mount the AS5600 on a knuckle.
 Both sims use assumed numbers (mass split, mat mu, drive authority, 0.5° slop). The
 qualitative conclusions (low-speed scrub is cheap; single pivot is slop-robust) are
 solid; exact mm values are not gospel. Real decision is confirmed on the mat.
+
+---
+
+## ⚠️ SUPERSEDED — 2026-07-26
+
+**This study's conclusion was not followed.** The car was built with **parallelogram
+(equal-angle tie-bar) steering**, which this study ranked as "strictly dominated".
+
+**The study was not wrong within its own objective function — the objective function was
+incomplete.** It scored candidates on kinematic scrub, parking accuracy and robustness to
+build slop. It **never modelled the swept envelope of the vehicle body during a turn.**
+
+That missing term is decisive. On a single central pivot the whole front beam rotates
+about one axis, so one front wheel swings forward and the other swings back by
+`(track/2) × sin δ`. At the as-built track of 105 mm and a 35° lock that is
+**±30.1 mm per wheel** — the car's effective length grows exactly when clearance is
+tightest. Against a parking bay of 1.5 × 165 mm = 247.5 mm with only **82.5 mm of total
+slack**, that is **36% of the slack consumed for zero navigational benefit**, in a rule
+where touching a magenta limiter scores 0 parking points (rule 9.24.7).
+
+**Nothing above this line has been edited.** The study, its plots and its conclusion are
+preserved deliberately: a repo that shows "we simulated three mechanisms, chose one,
+built another, and here is the term the model was missing" is stronger evidence of
+engineering than one that only ever shows the winner.
+
+Superseding record: `DECISIONS.md` #4 supersession block, #15, #16;
+`journal/day-02-plan-revision-2026-07-26.md`.
