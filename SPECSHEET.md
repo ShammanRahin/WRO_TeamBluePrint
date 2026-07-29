@@ -1,8 +1,10 @@
 # SPECSHEET — WRO Future Engineers 2026
 
-**Team:** Blueprint · **Competition:** WRO Future Engineers 2026 (October 2026)
-**Status:** Design phase — v1 print-ready target, then iterate on real mat (Sept–Oct).
+**Team:** Blueprint · **National competition: 20 August 2026** · International: October 2026
+**Status:** Vehicle built; electronics in PCB design. Iterating on the real mat through August.
 This file is a SOURCE OF TRUTH. Update it as decisions lock.
+**Revised 2026-07-28** — steering lock, I²C topology, IMU and electrical build all changed;
+see Decisions #23–#28.
 
 ---
 
@@ -42,7 +44,8 @@ This file is a SOURCE OF TRUTH. Update it as decisions lock.
 | **Wheelbase (front axle to rear axle)** | **TBD** | must be <= 165 - 23 - 25 = **117 mm** |
 | Front wheel dia | **46 mm** | |
 | Rear wheel dia | **50 mm** | drives odometry |
-| Steering lock (measured) | **+/-35 deg** | parallelogram, equal-angle |
+| Steering lock (as built, measured) | **+/-35 deg** | parallelogram, equal-angle |
+| Steering lock (target, Decision #28) | **+/-40 deg** | 🚩 confirm the linkage reaches it cleanly before trusting |
 | Car height (current) | **50 mm** | will grow to ~75-90 mm with Pi 4B + BTS7960 stack |
 | Steering | **parallelogram tie-bar, open-loop** | Decision #15, #16 |
 | Rear axle | solid, no diff, **5:1 gear** | Decision #14 |
@@ -50,16 +53,27 @@ This file is a SOURCE OF TRUTH. Update it as decisions lock.
 **Scored footprint 165 x 115 mm** — well inside the 300 x 200 mm limit.
 
 ### Turn radius (BLOCKED on wheelbase)
-`R = wheelbase / tan(35 deg) = wheelbase / 0.7002`
+`R = wheelbase / tan(lock)`
 
-| Wheelbase | R |
-|---|---|
-| 100 mm | 143 mm |
-| 110 mm | 157 mm |
-| 117 mm | 167 mm |
+| Wheelbase | R @ 35 deg | R @ 40 deg (Decision #28) |
+|---|---|---|
+| 100 mm | 143 mm | **119 mm** |
+| 110 mm | 157 mm | **131 mm** |
+| 117 mm | 167 mm | **139 mm** |
 
-All land in or near the original 120-150 mm target band, so the design is sound.
-FLAG: one measured number is needed before `src/sim/park_feasibility.py` can run.
+At 35 deg the radius sits at or above the top of the 120-150 mm target band across the
+whole feasible wheelbase range. **At 40 deg it lands inside the band.** That is what
+Decision #28 buys — it does NOT fix the parking manoeuvre, see below.
+
+🚩 **The wheelbase is still unmeasured.** 105 mm is the TRACK, not the wheelbase, and the
+two have already been confused once. Both `src/sim/park_feasibility.py` and
+`src/sim/geometry_sweep.py` refuse to default it and error rather than assume.
+Sweep the whole range with:
+
+```bash
+python3 src/sim/geometry_sweep.py            # sweeps, refuses a single answer
+python3 src/sim/geometry_sweep.py --wheelbase 110 --plot
+```
 
 ### Chassis rake — a real, inherited error
 Front 46 mm vs rear 50 mm = 2 mm axle height difference over the wheelbase:
@@ -195,13 +209,33 @@ modelled swept envelope, which is why it ranked parallel bell-crank as dominated
 
 ## 8. Sensors - AS BUILT
 
+> **REVISED 2026-07-28 (Decisions #23, #24).** XSHUT address reassignment is replaced by a
+> **PCA9548A multiplexer** — one sensor per channel, every device at its factory 0x29, five
+> XSHUT GPIO reclaimed and the volatile-address-on-brownout problem deleted rather than
+> managed. The MPU9250 is **not on hand**; the part we have is an MPU6050, which is I2C-only.
+
 | Sensor | Part | Bus | Role |
 |---|---|---|---|
-| Distance x5 | **VL53L0X** | I2C1, XSHUT-reassigned 0x30-0x34 | F / FL30 / FR30 / L90 / R90 |
-| Floor colour | **TCS34725** | I2C2, alone | turn trigger + direction decode |
-| Heading | **MPU9250** | **SPI1** | gyro-Z only |
+| Distance x5 (6th planned) | **VL53L0X** | PCA9548A ch0-ch5, all @ 0x29 | F / FL30 / FR30 / L90 / R90 |
+| Floor colour | **TCS34725** | PCA9548A ch6 | turn trigger + direction decode |
+| Heading — **race** | **BNO08x / ICM-42688** | **SPI1, mainboard, no mux** | gyro-Z only 🚩 **not yet ordered** |
+| Heading — bench only | **MPU6050** (`WHO_AM_I` 0x68) | PCA9548A ch7 | bring-up only, **will not race** |
 | Odometry | 25GA encoder | TIM3 quadrature | distance + closed-loop speed |
 | Pillar colour | Fisheye 160 deg + Pi 4B | UART | obstacle round only |
+
+**Why the racing IMU stays off the mux:** Decision #1 terminates all 12 corners and every
+park arc on measured heading, so the gyro is the most latency-critical signal in the
+vehicle. Behind a mux it would queue behind five ToF sensors and a cable. The bench
+MPU6050 can afford that; the racing part cannot.
+
+🚩 **The competition IMU is the longest-lead item left and is not ordered.** Contingency:
+I2C2 is routed to the same header, so the MPU6050 can move onto a dedicated bus by
+swapping a cable rather than re-etching a board.
+
+🚩 **One regression to watch:** the TCS34725 previously had a private bus specifically so
+no ToF cable fault could take down the turn trigger. It now has address isolation but not
+fault isolation. `MUX_RST` is wired to the STM32 for exactly this reason. If bench testing
+shows ToF faults hanging the bus, move the TCS back to its own bus on PB10 — one spare pin.
 
 > **CORRECTS** the 2026-07-12 entry, which specified VL53L1X. The parts on hand are
 > **VL53L0X**, which has **no programmable ROI** - the mitigation assumed in that entry
@@ -270,13 +304,30 @@ Full detail: `electrical/ELECTRICAL.md`. Block diagram: `schemes/wiring_block_di
 
 ### Power domains - ONE master switch (rule 9.10)
 ```
-  XT30      10 A fuse    MASTER SWITCH (rule 9.10: only one switch may power the vehicle on)
-[3S LiPo]--+--[FUSE]------[SPST 10A]--+--> DOMAIN M : BTS7960 -> 25GA -> 5:1 -> solid rear axle
-           |                          +--> BEC-S 6.0V/3A -> MG996R servo ONLY
-       (star GND)                     +--> BEC-L 5.0V/2A -> STM32 + 5x VL53L0X + TCS + MPU9250
-           |                          +--> BEC-C 5.1V/3A -> Pi 4B + fisheye  [OPEN ROUND: REMOVED]
-           +-- all BEC grounds + battery negative meet at ONE M3 brass standoff
+  [connector]              MASTER SWITCH (rule 9.10: only one switch may power the vehicle on)
+[3S LiPo 75C]--+------------[SPST 10A]--+--> DOMAIN M : BTS7960 -> 25GA -> 5:1 -> solid rear axle
+               | (NO FUSE, #26)         +--> BEC-S 6.0V/3A -> MG996R servo ONLY
+           (star GND)                   +--> BEC-L 5.0V/2A -> Board A logic + Board B (3V3 local)
+               |                        +--> BEC-C 5.1V/3A -> Pi 4B + fisheye  [OPEN ROUND: REMOVED]
+               +-- all BEC grounds + battery negative meet at ONE M3 brass standoff
 ```
+
+🚩 **Fuse deliberately omitted (Decision #26)** — accepted risk, not an oversight. A 75C 3S
+pack will deliver several hundred amps into a short with no current limiting.
+🚩 **Battery connector unresolved** — JST-XH is ~3 A per contact against ~8 A peak draw;
+XT30 (30 A) remains the specified part until decided otherwise.
+
+### Physical build — two stacked single-sided boards (Decision #25)
+Our fab does double-sided **without plated through-holes**, so two-layer is unusable and
+**no ground plane is available at any layer count**. At 0.5 mm minimum trace and space,
+**no trace can pass between two adjacent header pins**, so placement rather than routing
+is the design problem.
+
+- **Board A (upper):** STM32, BTS7960, BEC rails, servo, encoder, Pi UART, competition IMU
+- **Board B (lower):** PCA9548A + 8 channels + local AMS1117-3.3
+- Joined by a ~40 mm **6-pin JST-XH**. High current never crosses PCB copper.
+
+Full detail: `electrical/ELECTRICAL.md`. Fab rules: `electrical/DESIGN_RULES.md`.
 
 The Domain C harness is **physically absent** for the Open Challenge. That is an
 inspectable claim, not a software flag: the Open configuration cannot be influenced by
@@ -287,7 +338,7 @@ the Pi because the Pi is not electrically present.
 |---|---|---|---|
 | M | 25GA via BTS7960 | ~0.6 A | FLAG - stall not yet measured |
 | S | MG996R | 0.5-0.9 A | ~2.5 A stall |
-| L | STM32 40 mA + 5x VL53L0X 100 mA + TCS 3 mA + MPU9250 4 mA | **~150 mA** | ~200 mA |
+| L | STM32 40 mA + 5x VL53L0X 100 mA + TCS 3 mA + MPU6050 4 mA + PCA9548A 1 mA | **~150 mA** | ~250 mA |
 | C | Pi 4B 1 GB + camera | 0.85 A | ~1.25 A |
 
 Pi 4B: set BEC-C to **5.15 V measured at the header under load**, feed pins 2/4/6 with
