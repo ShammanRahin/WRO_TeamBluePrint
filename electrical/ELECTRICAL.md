@@ -1,7 +1,8 @@
 # ELECTRICAL — WRO Future Engineers 2026, Team Blueprint
 
 **Revised 2026-07-28.** Supersedes the 2026-07-26 revision.
-Block diagram: `schemes/wiring_block_diagram.png` · Solvers: `electrical/collimator.py`,
+Pin-level wiring diagram: **`schemes/stm32_wiring.svg`** · Block diagram:
+`schemes/wiring_block_diagram.png` · Solvers: `electrical/collimator.py`,
 `src/sim/geometry_sweep.py` · Fab constraints: `electrical/DESIGN_RULES.md`
 
 Rule references are to `WRO2026FutureEngineersSelfDrivingCarsGeneralRules.pdf`.
@@ -190,10 +191,46 @@ line — a constant integration timestep removes a whole class of drift error.
 **No magnetometer**: a BTS7960 switching amps on a 115 mm chassis will corrupt it.
 Bias auto-zeroes at power-on while stationary, which rule 9.6 guarantees.
 
-🚩 **The competition IMU is not on hand and not yet ordered.** It is the longest-lead item
-left. Contingency: I2C2 (PB10 + a spare) can be brought to the same header, letting the
-MPU6050 move off the mux onto a dedicated bus by swapping one cable rather than re-etching
-a board.
+🚩 **The competition IMU is not on hand and not yet ordered.** Sourcing is local
+(RoboticsBD), so lead time is days rather than weeks — the remaining risk is firmware,
+not procurement. Contingency: I2C2 (PB10 + a spare) can be brought to the same header,
+letting the MPU6050 move off the mux onto a dedicated bus by swapping one cable rather
+than re-etching a board.
+
+### BNO080/085 breakout — pad mapping and strapping
+
+The purple CJMCU/GY-BNO08X board labels its pads with the **I²C** names. Three of them
+mean something different in SPI mode, and nothing on the silkscreen says so:
+
+| Board pad | SPI function | STM32 |
+|---|---|---|
+| VCC | 3.3 V **only** — check for a regulator before applying 5 V | 3V3 |
+| GND | GND | GND |
+| **SCL** | **SCK** | PB3 |
+| **SDA** | **MOSI** | PB5 |
+| **AD0** | **MISO** | PB4 |
+| CS | CS | PB0 |
+| INT | INT | PB13 |
+| RST | RST | PB14 |
+| **PS1** | strap **HIGH** | → VCC on the module |
+| **PS0** | strap **HIGH** (doubles as WAKE) | → VCC on the module |
+| BOOT | leave floating — pull low only for DFU | — |
+
+**PS1 = HIGH, PS0 = HIGH selects SPI.** `00` is I²C, `01` is UART. Left floating, the part
+comes up in an undefined protocol and presents as completely dead — no response, no error,
+nothing to debug against. Strap both to VCC **on the module** before first power-up, so
+they never enter the harness. That keeps the cable at 8 wires.
+
+**INT is part of the bus, not an optimisation.** The BNO08x speaks SHTP, a packet
+transport — not a register map. There is no "read gyro-Z from 0x43". The host must wait
+for INT to assert before clocking a transfer. Budget real firmware time for this; the
+MPU6050 driver does not carry over at all.
+
+> **If sourcing allows, prefer an ICM-42688.** It is a plain register-mapped SPI part that
+> drops into the existing gyro-Z code almost unchanged. The BNO08x's selling point is
+> onboard fusion, which this design does not use — Decision #1 integrates gyro-Z itself and
+> re-references at every corner. Buying SHTP complexity for a feature we discard is a poor
+> trade under schedule pressure.
 
 ---
 
@@ -217,7 +254,7 @@ DS10314 Rev 7 Table 8. (Web searches will tell you otherwise; they are wrong.)
 | PA8 | TIM1_CH1 | **AF1** | SERVO_PWM | 1 µs tick, ARR = 19999 → **50 Hz** |
 | PB8 / PB9 | TIM4_CH3 / CH4 | **AF2** | BTS7960 RPWM / LPWM | **Moved off PA0/PA1 — see below** |
 | PB1 | GPIO | — | BTS7960 R_EN + L_EN tied | **low at boot = motor disabled**; 10 kΩ pull-down |
-| PA9 / PA10 | USART1 | **AF7** | → Pi TX / ← Pi RX | 220 Ω series each |
+| PA9 / PA10 | USART1 | **AF7** | → Pi TX / ← Pi RX | 220 Ω series each — **see §5.3** |
 | PA2 / PA3 | USART2 | **AF7** | Debug TX / RX | **physically unplugged for runs** |
 | PA5 | GPIO / EXTI5 | — | START_BTN | 10 kΩ pull-up + 1 kΩ + 100 nF (rule 9.11) |
 | PA4 | ADC1_IN4 | — | VBAT_SENSE | 10 kΩ / 2.2 kΩ divider |
@@ -247,6 +284,67 @@ and keep output speed ≤2 MHz.
 
 🚩 **PB5 is `TC` — 3.3 V only, not 5 V tolerant.** Every other pin in this map is `FT`.
 `IMU_INT` was placed on PB13 rather than PB5 for exactly this reason.
+
+### 5.3 Pi 4B UART link
+
+Both ends are 3.3 V, so this is a direct connection — **no level shifter.**
+
+| Pi 4B | | STM32 |
+|---|---|---|
+| GPIO14 / TXD — **physical pin 8** | → 220 Ω → | **PA10** (USART1_RX) |
+| GPIO15 / RXD — **physical pin 10** | ← 220 Ω ← | **PA9** (USART1_TX) |
+| GND — **physical pin 6** | ——— | GND |
+| GND — **physical pin 14** | ——— | GND |
+
+**TX goes to RX.** Common ground is mandatory — two independent BEC rails with no shared
+reference means the UART has no idea what 0 V is. The second ground gives each signal its
+own return. **Never carry 5 V or 3.3 V on this cable**; the Pi has BEC-C, and keeping power
+off the link is what makes Domain C genuinely unpluggable.
+
+#### The Pi has two UARTs and the default one is wrong
+
+| | PL011 (`/dev/ttyAMA0`) | mini-UART (`/dev/ttyS0`) |
+|---|---|---|
+| Baud stability | proper clock source | **tied to the VPU core clock** |
+| Default on Pi 4B | Bluetooth | GPIO14/15 |
+
+The mini-UART's baud rate **drifts with CPU frequency scaling**, so framing quietly breaks
+under load. That is exactly the nondeterminism this vehicle is built to eliminate.
+
+In `/boot/firmware/config.txt` (Bookworm; `/boot/config.txt` on older images):
+
+```ini
+enable_uart=1
+dtoverlay=disable-bt
+dtoverlay=disable-wifi
+```
+
+`disable-bt` hands PL011 to the GPIO header → talk to `/dev/ttyAMA0`. The same two
+overlays are also how rule 11.10 (no RF during rounds) is satisfied — one change, two jobs.
+
+Then stop Linux fighting you for the port:
+
+```bash
+sudo systemctl disable --now serial-getty@ttyAMA0.service
+```
+
+and remove `console=serial0,115200` from `/boot/firmware/cmdline.txt`. 115200 baud is
+ample for colour frames at 15–30 Hz.
+
+#### PA10 needs its internal pull-up enabled
+
+The Domain C harness is **physically removed for the Open round**, leaving PA10 floating.
+A floating UART RX picks up noise and generates spurious characters and framing errors for
+the whole run. UART idle state is high, so a pulled-up RX reads as a quiet line instead of
+garbage. **Enable the internal pull-up on PA10.**
+
+The receive path is timeout-driven either way (Decision #2): no valid checksummed frame
+inside the window and the STM32 continues on its own policy. That single code path covers
+both "Pi unplugged" and "Pi crashed mid-run".
+
+Minor known exposure: if the STM32 is powered and the Pi is not, PA9 drives into the Pi's
+input protection diode. The 220 Ω limits it to a couple of mA, and both boards come up
+together off one battery, so this is a transient rather than a design fault.
 
 ### DMA (verified, RM0383 Tables 27–28)
 
@@ -380,7 +478,7 @@ becomes physically impossible.
 | **Board A ↔ Board B** | JST-XH | **6** | 5 V, GND, SCL, RST, SDA, GND |
 | ToF ×6 (Board B, one per channel) | JST-XH | 4 | 3V3, GND, SCL, SDA |
 | TCS34725 (Board B ch6) | JST-XH | 4 | 3V3, GND, SCL, SDA — **keyed differently from ToF, or Y-split** |
-| Competition IMU | JST-XH | 7 | 3V3, GND, SCK, MISO, MOSI, CS, INT |
+| Competition IMU | JST-XH | **8** | 3V3, GND, SCK, MISO, MOSI, CS, INT, **RST** |
 | Pi link | JST-XH | 4 | GND, TX, RX, GND |
 
 🚩 The ToF and TCS harnesses are now both 4-pin JST-XH with identical pinouts. That
