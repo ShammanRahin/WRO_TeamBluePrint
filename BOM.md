@@ -11,7 +11,7 @@ inventory check + Daraz/RoboticsBD lookup. TBD = not yet confirmed.
 | Drive motor | 25GA gearmotor, 1331 RPM, 180 counts/rev (encoder on motor) | **On hand** | ⚠️ counts/rev per motor or per wheel — hand-rotate test still open |
 | Gear reduction | **5:1**, meshed to solid rear axle | **Built** | → 266 RPM, 0.70 m/s, 0.175 mm/count |
 | Rear axle | Solid, no differential | **Built** | Decision #14 |
-| Steering | **Parallelogram tie-bar**, lock ±35° built → **±40° target** | **Built** | Decisions #15, #28 |
+| Steering | **Parallelogram tie-bar**, lock **±35° final** | **Built** | Decision #15 |
 | **I²C mux** | **PCA9548A module** | **On hand** | Decision #23 — replaces XSHUT addressing, reverses #20 |
 | Steering servo | **MG996R** — metal-gear, **analog**, ~55 g, ~10 kg·cm | **On hand** | 50 Hz frame rate ceiling; ~2.5 A stall |
 | MCU | **STM32F411CEU6** "Black Pill" | **On hand** | 26/28 usable pins allocated |

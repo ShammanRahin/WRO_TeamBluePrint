@@ -41,43 +41,42 @@ see Decisions #23–#28.
 | Track (wheel extreme to extreme) | **115 mm** | this is the scored width, not the 80 mm plate |
 | Body length | **165 mm** | scored length = projection on mat (Appendix A 2/6) |
 | Chassis plate | 80 x 130 mm | |
-| **Wheelbase (front axle to rear axle)** | **TBD** | must be <= 165 - 23 - 25 = **117 mm** |
+| **Wheelbase (front axle to rear axle)** | **110 mm** | measured 2026-07-28. Ceiling is 165 - 23 - 25 = 117 mm |
 | Front wheel dia | **46 mm** | |
 | Rear wheel dia | **50 mm** | drives odometry |
-| Steering lock (as built, measured) | **+/-35 deg** | parallelogram, equal-angle |
-| Steering lock (target, Decision #28) | **+/-40 deg** | 🚩 confirm the linkage reaches it cleanly before trusting |
+| Steering lock | **+/-35 deg** | parallelogram, equal-angle. **Final.** |
+| **Turn radius R** | **157 mm** | 110 / tan 35 deg |
 | Car height (current) | **50 mm** | will grow to ~75-90 mm with Pi 4B + BTS7960 stack |
 | Steering | **parallelogram tie-bar, open-loop** | Decision #15, #16 |
 | Rear axle | solid, no diff, **5:1 gear** | Decision #14 |
 
 **Scored footprint 165 x 115 mm** — well inside the 300 x 200 mm limit.
 
-### Turn radius (BLOCKED on wheelbase)
-`R = wheelbase / tan(lock)`
+### Turn radius — RESOLVED 2026-07-28
 
-| Wheelbase | R @ 35 deg | R @ 40 deg (Decision #28) |
-|---|---|---|
-| 100 mm | 143 mm | **119 mm** |
-| 110 mm | 157 mm | **131 mm** |
-| 117 mm | 167 mm | **139 mm** |
+`R = wheelbase / tan(lock) = 110 / tan(35 deg) = **157 mm**`
 
-At 35 deg the radius sits at or above the top of the 120-150 mm target band across the
-whole feasible wheelbase range. **At 40 deg it lands inside the band.** That is what
-Decision #28 buys — it does NOT fix the parking manoeuvre, see below.
-
-🚩 **The wheelbase is still unmeasured.** 105 mm is the TRACK, not the wheelbase, and the
-two have already been confused once. Both `src/sim/park_feasibility.py` and
-`src/sim/geometry_sweep.py` refuse to default it and error rather than assume.
-Sweep the whole range with:
+**157 mm is above the 120-150 mm target band, by 7 mm.** This is accepted, not overlooked.
+Raising the lock to 40 deg would put R at 131 mm and inside the band, and that change was
+briefly adopted before being withdrawn: the linkage is built and measured at 35 deg, and
+a lock angle the mechanism does not actually reach is worth nothing. The band was a design
+guideline from the 2026-07-12 optimiser, not a rule limit, and 5% over it costs nothing
+scored. The parking manoeuvre — which is what the band was really protecting — is handled
+by the multi-point shuffle regardless of R (Decision #21).
 
 ```bash
-python3 src/sim/geometry_sweep.py            # sweeps, refuses a single answer
+python3 src/sim/geometry_sweep.py                      # defaults to the measured 110 mm
 python3 src/sim/geometry_sweep.py --wheelbase 110 --plot
 ```
 
+🚩 **105 mm is the TRACK, not the wheelbase.** Keeping the note because the two were
+confused more than once: track is lateral (wheel centre to wheel centre), wheelbase is
+longitudinal (front axle centre to rear axle centre).
+
 ### Chassis rake — a real, inherited error
 Front 46 mm vs rear 50 mm = 2 mm axle height difference over the wheelbase:
-`rake = atan(2 / wheelbase)` = **1.0-1.1 deg nose-down** across the feasible wheelbase range.
+`rake = atan(2 / 110)` = **1.04 deg nose-down** (was quoted as a 1.0-1.1 deg range while
+the wheelbase was unmeasured).
 Every chassis-mounted sensor inherits this and is aimed AT THE FLOOR. Corrected by a
 +2 deg printed wedge in every ToF mount — see Section 8 and Decision #18.
 
@@ -86,15 +85,19 @@ Bay = 1.5 x 165 = **247.5 mm** -> total longitudinal slack **82.5 mm**.
 Limiters are 200 x 20 x 100 mm and the car is 50-90 mm tall, so the car **cannot pass
 over them** at any point in the manoeuvre.
 
-`src/sim/park_feasibility.py` (run 2026-07-26, WB 110 mm) sweeps the parked longitudinal
-position — the only free variable in a symmetric two-arc — and finds:
+`src/sim/park_feasibility.py` (WB **110 mm confirmed 2026-07-28**) sweeps the parked
+longitudinal position — the only free variable in a symmetric two-arc — and finds:
 
 | Lock | R | R/L | Best clearance | Verdict |
 |---|---|---|---|---|
-| **35 deg (as built)** | 157 mm | 0.95 | **-25.6 mm** | **COLLISION** |
-| 40 deg | 131 mm | 0.79 | -10.8 mm | COLLISION |
+| **35 deg (as built, FINAL)** | **157 mm** | **0.95** | **-25.6 mm** | **COLLISION** |
+| 40 deg | 131 mm | 0.79 | -10.8 mm | COLLISION — considered and withdrawn |
 | 45 deg | 110 mm | 0.67 | +0.1 mm | clears by nothing |
 | 60 deg | 64 mm | 0.38 | +0.5 mm | clears by nothing |
+
+The 40 and 45 deg rows are kept because they are the evidence that raising the lock does
+not solve this. 40 deg still collides; 45 deg clears by 0.1 mm, which on an open-loop
+steering system is not clearance.
 
 The front-outer corner sweeps into the entry limiter at ~37 deg heading while the rear
 axle is still 164 mm along the bay.

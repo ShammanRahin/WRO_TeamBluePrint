@@ -5,31 +5,29 @@ geometry_sweep.py — turn radius and park-feasibility ratio vs wheelbase and st
 WHY THIS EXISTS
 ---------------
 Decision #21 found the symmetric two-arc park fails by 25.6 mm at the as-built 35 deg
-lock, with R/L = 0.95 against a requirement of roughly R/L <= 0.7.  Decision #28 raised
-the lock to 40 deg.  Neither number can be turned into a new R/L until the wheelbase is
-measured, because
+lock, with R/L = 0.95 against a requirement of roughly R/L <= 0.7.  Decision #28 briefly
+raised the lock to 40 deg to fix that and was withdrawn the same day -- the linkage is
+built and measured at 35 deg, and 40 deg still collides by 10.8 mm anyway.
+
+This script exists to make that trade legible, since
 
     R = wheelbase / tan(lock)
 
-and the wheelbase has never been measured.  105 mm is the TRACK (Decision #15), not the
-wheelbase, and the two have already been confused once.
+The wheelbase was measured on 2026-07-28 at 110 mm.  105 mm is the TRACK (Decision #15),
+not the wheelbase -- the two were confused more than once during design.
 
 This script sweeps both axes so the answer can be read off the moment the calipers come
 out, and so the sensitivity is visible: it shows how much the conclusion moves for a
 5 mm measurement error.
 
-Like park_feasibility.py, this script has NO default wheelbase.  If you do not supply a
-range it sweeps one and refuses to report a single number, because a single number would
-imply a measurement we do not have.
+The wheelbase now defaults to the measured 110 mm.  Pass --wheelbase to override, or
+--sweep to see the sensitivity across the feasible range.
 
 USAGE
 -----
-    # Sweep — what we can honestly say today
-    python3 src/sim/geometry_sweep.py
-
-    # Once the wheelbase is measured
-    python3 src/sim/geometry_sweep.py --wheelbase 110
-    python3 src/sim/geometry_sweep.py --wheelbase 110 --plot
+    python3 src/sim/geometry_sweep.py            # measured 110 mm
+    python3 src/sim/geometry_sweep.py --sweep    # sensitivity across the range
+    python3 src/sim/geometry_sweep.py --plot
 
 REFERENCES
 ----------
@@ -44,6 +42,7 @@ import sys
 # --- Vehicle constants, as built -------------------------------------------------
 CAR_LENGTH_MM = 165.0      # README section 2, scored footprint 165 x 115
 TRACK_MM = 105.0           # centre-to-centre.  NOT the wheelbase.
+WHEELBASE_MM = 110.0       # measured 2026-07-28, front axle centre to rear axle centre
 
 # --- Targets ---------------------------------------------------------------------
 R_BAND_MM = (120.0, 150.0)  # design target band for turn radius
@@ -112,9 +111,9 @@ def report_single(wheelbase_mm: float, locks) -> None:
 
     r35 = turn_radius(wheelbase_mm, 35.0)
     r40 = turn_radius(wheelbase_mm, 40.0)
-    print(f"  Decision #28 raised lock 35 -> 40 deg: "
-          f"R {r35:.1f} -> {r40:.1f} mm  "
-          f"({100.0 * (r35 - r40) / r35:.1f}% reduction)")
+    print(f"  Lock is FINAL at 35 deg -- R = {r35:.1f} mm.  Decision #28 briefly raised it")
+    print(f"  to 40 deg (R = {r40:.1f} mm) and was withdrawn: the linkage is built at 35 deg,")
+    print( "  and 40 deg still fails the two-arc park by 10.8 mm anyway.")
     print()
     print("  NOTE: this is the kinematic radius only.  Whether the park actually fits")
     print("  is decided by the swept body polygon against both magenta limiters --")
@@ -139,7 +138,7 @@ def plot(wheelbases, locks):
     ax.axhline(R_OVER_L_TWO_ARC_MAX * CAR_LENGTH_MM, ls="--", lw=1.2, color="red",
                label=f"two-arc limit R/L={R_OVER_L_TWO_ARC_MAX:.2f}")
 
-    ax.set_xlabel("wheelbase (mm)  -- STILL UNMEASURED")
+    ax.set_xlabel("wheelbase (mm)  -- measured value is 110 mm")
     ax.set_ylabel("turn radius R (mm)")
     ax.set_title("Turn radius vs wheelbase and steering lock\n"
                  f"car length {CAR_LENGTH_MM:.0f} mm; track {TRACK_MM:.0f} mm is NOT the wheelbase")
@@ -155,9 +154,11 @@ def plot(wheelbases, locks):
 def main() -> None:
     p = argparse.ArgumentParser(
         description="Turn radius and park ratio vs wheelbase and steering lock.")
-    p.add_argument("--wheelbase", type=float, default=None,
-                   help="measured wheelbase in mm, front axle centre to rear axle centre. "
-                        "Omit to sweep. There is deliberately no default.")
+    p.add_argument("--wheelbase", type=float, default=WHEELBASE_MM,
+                   help="wheelbase in mm, front axle centre to rear axle centre "
+                        "(default: %(default)s, measured 2026-07-28)")
+    p.add_argument("--sweep", action="store_true",
+                   help="sweep the feasible wheelbase range instead of a single value")
     p.add_argument("--locks", type=float, nargs="+", default=[30.0, 35.0, 40.0, 45.0],
                    help="steering lock angles in degrees (default: 30 35 40 45)")
     p.add_argument("--plot", action="store_true", help="write the sweep plot")
@@ -165,15 +166,11 @@ def main() -> None:
 
     wheelbases = [90.0, 95.0, 100.0, 105.0, 110.0, 115.0, 120.0, 125.0, 130.0]
 
-    if args.wheelbase is None:
+    if args.sweep:
         print()
-        print("  WHEELBASE NOT SUPPLIED -- sweeping.")
-        print("  The wheelbase has never been measured (README section 7, open items).")
+        print(f"  Sensitivity sweep.  Measured wheelbase is {WHEELBASE_MM:.0f} mm.")
         print(f"  {TRACK_MM:.0f} mm is the TRACK (Decision #15).  Do not substitute it here.")
         sweep(wheelbases, args.locks)
-        print("  Measure front axle centre to rear axle centre, then re-run with")
-        print("    --wheelbase <mm>")
-        print()
     else:
         report_single(args.wheelbase, args.locks)
 

@@ -40,9 +40,10 @@ I²C topology — and all three are worth reading before anything else.
 | Scored footprint | **165 × 115 mm** (limit 300 × 200 mm) |
 | Height | 50 mm as built; ~75–90 mm with the obstacle-round stack (limit 300 mm) |
 | Track | 105 mm centre-to-centre, 115 mm wheel extremes |
-| Wheelbase | 🚩 **still unmeasured** — bounded at ≤117 mm by the body length |
+| Wheelbase | **110 mm** (measured 2026-07-28) |
 | Wheels | 46 mm front, 50 mm rear |
-| Steering | Parallelogram tie-bar, ±35° built and ±40° targeted, one MG996R |
+| Steering | Parallelogram tie-bar, **±35° final**, one MG996R |
+| Turn radius | **157 mm** (110 ÷ tan 35°) |
 | Drive | One 25GA gearmotor → **5:1 gear** → **solid rear axle**, no differential |
 | Top speed | **0.70 m/s** |
 | Odometry | **0.175 mm/count** |
@@ -135,9 +136,10 @@ The important part is that **the problem is scale-invariant**. The bay is always
 because the bay shrinks with it. The only levers are the ratio of turn radius to car length
 and the manoeuvre itself.
 
-We later raised the steering lock to 40° and re-ran it. It still fails, by 10.8 mm. A
+We tried raising the steering lock to 40° and re-ran it. It still fails, by 10.8 mm. A
 two-arc needs about R/L ≤ 0.70, which takes 45°, which clears by 0.1 mm — and 0.1 mm of
-theoretical clearance on an open-loop steering system is not clearance at all.
+theoretical clearance on an open-loop steering system is not clearance at all. So the
+lock stayed at the as-built 35°, where the linkage actually reaches.
 
 So parking is a **multi-point shuffle closed on IMU yaw**. Slower, but robust to
 turn-radius error, and since the steering has no position feedback that error is real.
@@ -315,7 +317,6 @@ eye — no car is mechanically straight, and that matters more now that steering
 
 | Item | Blocks |
 |---|---|
-| **Wheelbase**, front axle centre to rear axle centre | Turn radius, park feasibility |
 | **Competition SPI IMU** — not ordered; the MPU6050 on hand is bench-only | The racing gyro path |
 | Encoder counts per motor revolution (hand-rotate test) | Odometry constant |
 | VL53L0X signal rate against black MDF with the snout fitted | The entire distance-sensing approach |
