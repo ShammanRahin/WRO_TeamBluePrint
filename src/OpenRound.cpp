@@ -1,10 +1,44 @@
-
 #include <Arduino.h>
 #include <Servo.h>
 #include <SPI.h>
 #include <Wire.h>
 #include <SparkFun_BNO08x_Arduino_Library.h>
 #include <Adafruit_TCS34725.h>
+
+// ============================================================
+// I2C MULTIPLEXER & ENUMS
+// ============================================================
+#define TCA_ADDR 0x70
+
+enum BlockColor { COLOR_NONE, COLOR_ORANGE, COLOR_BLUE };
+
+// ------------------------------------------------------------
+// FSM STATES
+//
+// Flow implemented:
+//   1. Robot drives straight, watching for the FIRST color hit
+//      (either orange or blue) -> STATE_SEARCH_FIRST_COLOR
+//   2. Whichever color is seen FIRST "locks" the run:
+//        - ORANGE first  -> clockwise mode   -> turn RIGHT 90 deg each hit
+//        - BLUE first    -> counterclockwise -> turn LEFT  90 deg each hit
+//      Once locked, the other color is ignored completely (filtered
+//      out at the sensor level, not just at the FSM level).
+//   3. Every time the locked color is detected again, the robot turns
+//      90 degrees in the locked direction (STATE_TURNING), then goes
+//      back to driving straight looking for the next hit
+//      (STATE_DRIVE_TO_BLOCK).
+//   4. After the locked color has been detected 12 times total, the
+//      robot drives straight 100cm and stops (STATE_FINAL_STRAIGHT ->
+//      STATE_FINISHED).
+// ------------------------------------------------------------
+enum RobotState {
+  STATE_INIT,
+  STATE_SEARCH_FIRST_COLOR,   // driving straight, first hit of either color locks the mode
+  STATE_TURNING,              // executes one locked-direction 90 deg turn
+  STATE_DRIVE_TO_BLOCK,       // driving straight, waiting for next locked-color hit
+  STATE_FINAL_STRAIGHT,       // all 12 turns done -> final 100cm run
+  STATE_FINISHED
+};
 
 // ============================================================
 // HARDWARE PINS & OBJECTS
@@ -17,13 +51,15 @@ const int SERVO_PIN  = PA8;   // Steering Servo
 const int IMU_CS_PIN  = PB0;
 const int IMU_INT_PIN = PB13;
 const int IMU_RST_PIN = PB14;
-//encoder and servo 
- const float TICKS_PER_CM        = 31.933; // ~958 ticks / 30 cm
-  const float SERVO_TRUE_STRAIGHT = 69.0;   // Center steering angle
-  const int   BASE_SPEED          = 120;    // Motor PWM cruising speed (1 to 255)
-  // 1. Constants & Tuning Parameters
-  float Kp = .7; // Steering responsiveness (increase if it's slow to correct)
-  float Kd = 0.5; // Steering damping (increase if it wobbles/oscillates)
+
+// Encoder and servo constants
+const float TICKS_PER_CM        = 31.933; // ~958 ticks / 30 cm
+const float SERVO_TRUE_STRAIGHT = 69.0;   // Center steering angle
+const int   BASE_SPEED          = 120;    // Motor PWM cruising speed (1 to 255)
+
+// PID Control Parameters
+float Kp = 0.7; // Steering responsiveness
+float Kd = 0.5; // Steering damping
 
 SPIClass SPI_IMU(PB5, PB4, PB3);
 Servo steeringServo;
@@ -31,50 +67,56 @@ BNO08x myIMU;
 Adafruit_TCS34725 tcs = Adafruit_TCS34725(TCS34725_INTEGRATIONTIME_24MS, TCS34725_GAIN_1X);
 
 bool tcsConnected = false;
+uint8_t tcsChannel = 0; // Multiplexer channel where TCS34725 is located
 float initialYawOffset = 0.0; // Stores the "Zero" angle
+
+// ============================================================
+// FSM DATA
+// ============================================================
+RobotState currentState = STATE_INIT;
+
+BlockColor lockedColor       = COLOR_NONE; // the color that "won" the first detection
+bool       clockwiseMode     = true;       // true = orange locked (turn right), false = blue locked (turn left)
+int        detectionCount    = 0;          // how many times the locked color has been seen
+const int  TARGET_DETECTIONS = 12;         // stop turning after this many hits
+const int  FINAL_STRAIGHT_CM = 100;        // final straight-line distance after last turn
+const float SEARCH_SAFETY_CM = 400.0;      // safety cap so the robot never drives forever w/o a hit
+
+float targetHeading = 0.0; // running absolute heading target the drive loop tries to hold
+
+// ============================================================
+// MULTIPLEXER HELPER
+// ============================================================
+void tcaselect(uint8_t channel) {
+  if (channel > 7) return;
+  Wire.beginTransmission(TCA_ADDR);
+  Wire.write(1 << channel);
+  Wire.endTransmission();
+}
 
 // ============================================================
 // 1. MOTOR & STEERING FUNCTIONS
 // ============================================================
 
-/*
- * setMotorSpeed(int speed)
- * Controls both direction and speed of the main drive motor.
- * - Positive values (1 to 255): Drive Forward
- * - Negative values (-1 to -255): Drive Backward
- * - Zero (0): Coast/Stop
- */
 void setMotorSpeed(int speed) {
-  speed = constrain(speed, -255, 255); // Prevent invalid PWM values
-  
+  speed = constrain(speed, -255, 255);
+
   if (speed > 0) {
-    // Forward
     analogWrite(RPWM_PIN, speed);
     analogWrite(LPWM_PIN, 0);
-  } 
+  }
   else if (speed < 0) {
-    // Backward
     analogWrite(RPWM_PIN, 0);
     analogWrite(LPWM_PIN, abs(speed));
-  } 
+  }
   else {
-    // Stop
     analogWrite(RPWM_PIN, 0);
     analogWrite(LPWM_PIN, 0);
   }
 }
 
-/*
- * setServoAngle(float angleDeg)
- * Steers the front wheels. 
- * - 69.0 is your calibrated true straight.
- * - Higher values turn Right, lower values turn Left.
- */
 void setServoAngle(float angleDeg) {
-  // Clamp to prevent physical damage to the steering rack
-  angleDeg = constrain(angleDeg, 5.0, 115.0); 
-  
-  // Map angle (0-180) to servo microsecond pulses (1000-2000)
+  angleDeg = constrain(angleDeg, 5.0, 115.0);
   int pulseWidth = (int)((angleDeg / 180.0) * 1000.0) + 1000;
   steeringServo.writeMicroseconds(pulseWidth);
 }
@@ -83,21 +125,10 @@ void setServoAngle(float angleDeg) {
 // 2. ENCODER FUNCTIONS
 // ============================================================
 
-/*
- * zeroEncoder()
- * Resets the wheel encoder distance counter back to 0. 
- * Call this right before starting a new movement segment.
- */
 void zeroEncoder() {
   TIM3->CNT = 0;
 }
 
-/*
- * readEncoder()
- * Returns the current tick count from the encoder.
- * - Moving forward increases the count.
- * - Moving backward decreases the count (can go negative).
- */
 long readEncoder() {
   return (int16_t)TIM3->CNT;
 }
@@ -106,18 +137,12 @@ long readEncoder() {
 // 3. IMU (YAW & HEADING) FUNCTIONS
 // ============================================================
 
-/*
- * readYaw()
- * Gets the raw, absolute Yaw angle directly from the IMU.
- * (Usually you will use readHeading() instead of this).
- */
 float readYaw() {
   float qI = myIMU.getQuatI();
   float qJ = myIMU.getQuatJ();
   float qK = myIMU.getQuatK();
   float qReal = myIMU.getQuatReal();
 
-  // If quaternions haven't received valid data yet, return 0
   if (qI == 0.0f && qJ == 0.0f && qK == 0.0f && qReal == 0.0f) {
     return 0.0f;
   }
@@ -126,21 +151,16 @@ float readYaw() {
                            (qReal * qReal + qI * qI - qJ * qJ - qK * qK));
   return yawRadians * (180.0 / PI);
 }
-/*
- * zeroYaw()
- * Takes the current orientation of the car and sets it as the new 0.0 degree line.
- * Call this once when the car is placed on the track.
- */
+
 void zeroYaw() {
   Serial.println("Waiting for valid IMU data to set Zero...");
-  
-  // Wait up to 3 seconds for the first valid Game Rotation report
+
   unsigned long timeout = millis();
   while (millis() - timeout < 3000) {
     if (myIMU.wasReset()) {
       myIMU.enableGameRotationVector();
     }
-    
+
     if (myIMU.getSensorEvent() && myIMU.getSensorEventID() == SENSOR_REPORTID_GAME_ROTATION_VECTOR) {
       initialYawOffset = readYaw();
       Serial.print("Zero Yaw successfully locked at: ");
@@ -152,41 +172,104 @@ void zeroYaw() {
   Serial.println("ERROR: Timed out waiting for IMU event!");
 }
 
-/*
- * readHeading()
- * Returns the car's current angle relative to your "Zero" line.
- * - Returns a value between -180.0 and +180.0.
- * - 0.0 means the car is perfectly straight.
- * - Positive means it drifted right, Negative means it drifted left.
- */
 float readHeading() {
   float currentYaw = readYaw();
-  // Math to find shortest difference between current angle and zero point
   return fmod(currentYaw - initialYawOffset + 540.0, 360.0) - 180.0;
 }
 
 // ============================================================
-// 4. COLOR SENSOR FUNCTION
+// 4. COLOR SENSOR FUNCTIONS
 // ============================================================
 
-/*
- * readColor(r, g, b, c)
- * Reads Red, Green, Blue, and Clear (brightness) values.
- * Usage: 
- *   uint16_t r, g, b, c;
- *   readColor(r, g, b, c);
- */
 void readColor(uint16_t &r, uint16_t &g, uint16_t &b, uint16_t &c) {
   if (tcsConnected) {
+    tcaselect(tcsChannel); // Ensure multiplexer route is active
     tcs.getRawData(&r, &g, &b, &c);
   } else {
-    r = 0; g = 0; b = 0; c = 0; // Return zeroes if unplugged
+    r = 0; g = 0; b = 0; c = 0;
   }
 }
 
+/*
+ * detectColorDebounced()
+ * Calibrated against tested Blue, Orange, and Floor raw profiles.
+ *
+ * filterColor: if not COLOR_NONE, any raw reading that isn't this
+ * exact color is treated as "nothing detected" -- it is discarded
+ * BEFORE it ever touches the debounce state machine. This is what
+ * makes the locked color truly ignore the other color: a stray
+ * blue reading can't reset/steal the orange debounce counters
+ * (and vice versa) once a color has been locked in.
+ */
+BlockColor detectColorDebounced(BlockColor filterColor = COLOR_NONE) {
+  static BlockColor pendingColor = COLOR_NONE;
+  static int consecutiveHits = 0;
+  static unsigned long lastDetectionTime = 0;
+
+  const int HITS_NEEDED = 3;              // Requires 3 consecutive positive loops
+  const unsigned long COOLDOWN_MS = 2000; // 2-second timeout between triggers
+
+  if (millis() - lastDetectionTime < COOLDOWN_MS) {
+    return COLOR_NONE;
+  }
+
+  uint16_t r, g, b, c;
+  readColor(r, g, b, c);
+
+  BlockColor rawColor = COLOR_NONE;
+  float totalLight = r + g + b;
+
+  if (totalLight > 0) {
+    float pR = ((float)r / totalLight) * 100.0;
+    float pB = ((float)b / totalLight) * 100.0;
+
+    // ============================================================
+    // CALIBRATED COLOR THRESHOLDS
+    // ============================================================
+    // Blue Object:  R% ~14-21%, B% ~39-43%
+    // Orange Object: R% ~46-48%, B% ~13-14%
+    // Floor (Ref):   R% ~31%,    B% ~28%
+    // ============================================================
+
+    if (pB > 35.0 && pR < 25.0) {
+      rawColor = COLOR_BLUE;
+    }
+    else if (pR > 42.0 && pB < 20.0) {
+      rawColor = COLOR_ORANGE;
+    }
+  }
+
+  // Reject anything that isn't the color we currently care about.
+  if (filterColor != COLOR_NONE && rawColor != COLOR_NONE && rawColor != filterColor) {
+    rawColor = COLOR_NONE;
+  }
+
+  // Debounce Filtering
+  if (rawColor != COLOR_NONE) {
+    if (rawColor == pendingColor) {
+      consecutiveHits++;
+    } else {
+      pendingColor = rawColor;
+      consecutiveHits = 1;
+    }
+
+    if (consecutiveHits >= HITS_NEEDED) {
+      lastDetectionTime = millis();
+      consecutiveHits = 0;
+      pendingColor = COLOR_NONE;
+      return rawColor;
+    }
+  }
+  else {
+    consecutiveHits = 0;
+    pendingColor = COLOR_NONE;
+  }
+
+  return COLOR_NONE;
+}
 
 // ============================================================
-// SYSTEM INITIALIZATION (Don't change this block)
+// SYSTEM INITIALIZATION
 // ============================================================
 void initHardware() {
   // Motors
@@ -198,7 +281,7 @@ void initHardware() {
 
   // Servo
   steeringServo.attach(SERVO_PIN, 1000, 2000);
-  setServoAngle(69.0); // Center steering
+  setServoAngle(69.0);
 
   // Encoder (Timer 3)
   __HAL_RCC_GPIOA_CLK_ENABLE();
@@ -210,6 +293,7 @@ void initHardware() {
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
   TIM_Encoder_InitTypeDef sConfig = {0};
   TIM_HandleTypeDef htim3 = {0};
   htim3.Instance = TIM3;
@@ -224,9 +308,27 @@ void initHardware() {
   HAL_TIM_Encoder_Init(&htim3, &sConfig);
   HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
 
-  // Color Sensor
-  if (tcs.begin()) {
-    tcsConnected = true;
+  // Wire Setup for TCA9548A Multiplexer
+  Wire.setSDA(PB7);
+  Wire.setSCL(PB6);
+  Wire.begin();
+  delay(100);
+
+  // Locate TCS34725 across Multiplexer Channels
+  for (uint8_t i = 0; i < 8; i++) {
+    tcaselect(i);
+    delay(10);
+    if (tcs.begin()) {
+      tcsConnected = true;
+      tcsChannel = i;
+      Serial.print("TCS34725 connected on TCA channel ");
+      Serial.println(i);
+      break;
+    }
+  }
+
+  if (!tcsConnected) {
+    Serial.println("WARNING: TCS34725 not detected through TCA9548A!");
   }
 
   // IMU
@@ -235,46 +337,40 @@ void initHardware() {
     delay(500);
     myIMU.enableGameRotationVector();
     delay(100);
-    
-    // Auto-zero the IMU on boot
+
     myIMU.getSensorEvent();
     zeroYaw();
   }
 }
-// ============================================================
-// 1. TURN TO ABSOLUTE GLOBAL HEADING
-// ============================================================
-void turnToHeading(float targetGlobalHeading) {
-  // 1. Steering & Speed Constants
-  const float SERVO_TRUE_STRAIGHT = 69.0;
-  const float SERVO_MAX_RIGHT     = 115.0; 
-  const float SERVO_MAX_LEFT      = 5.0;  
-  
-  // ============================================================
-  // TUNING PARAMETERS
-  // ============================================================
-  const int   TURN_PWM            = 90;   // Turning power
-  const float STOP_THRESHOLD      = 4.0;  // Cut power early (in degrees) to account for coasting
 
-  // Wrap target angle within -180.0 to +180.0
+// ============================================================
+// NAVIGATION FUNCTIONS
+// ============================================================
+
+void turnToHeading(float targetGlobalHeading) {
+  const float SERVO_TRUE_STRAIGHT = 69.0;
+  const float SERVO_MAX_RIGHT     = 115.0;
+  const float SERVO_MAX_LEFT      = 5.0;
+
+  const int   TURN_PWM            = 90;
+  const float STOP_THRESHOLD      = 4.0;
+
   while (targetGlobalHeading > 180.0)  targetGlobalHeading -= 360.0;
   while (targetGlobalHeading < -180.0) targetGlobalHeading += 360.0;
 
   float currentHeading = readHeading();
   float angleNeeded = targetGlobalHeading - currentHeading;
 
-  // Wrap angleNeeded
   while (angleNeeded > 180.0)  angleNeeded -= 360.0;
   while (angleNeeded < -180.0) angleNeeded += 360.0;
 
-  // Steer towards target: Negative difference = Turn Right, Positive = Turn Left
   if (angleNeeded < 0) {
-    setServoAngle(SERVO_MAX_RIGHT); // Steer Right
+    setServoAngle(SERVO_MAX_RIGHT);
   } else {
-    setServoAngle(SERVO_MAX_LEFT);  // Steer Left
+    setServoAngle(SERVO_MAX_LEFT);
   }
 
-  delay(150); // Servo response time
+  delay(150);
   setMotorSpeed(TURN_PWM);
 
   while (true) {
@@ -289,47 +385,31 @@ void turnToHeading(float targetGlobalHeading) {
       while (errorRemaining > 180.0)  errorRemaining -= 360.0;
       while (errorRemaining < -180.0) errorRemaining += 360.0;
 
-      // Telemetry output to track turning accuracy
-      Serial.print("Target: "); Serial.print(targetGlobalHeading);
-      Serial.print(" | Current: "); Serial.print(currentHeading);
-      Serial.print(" | Error: "); Serial.println(errorRemaining);
-
-      // Early Cutoff Trigger:
-      // Right turn (angleNeeded < 0): errorRemaining approaches 0 from the negative side
       if (angleNeeded < 0 && errorRemaining >= -STOP_THRESHOLD) {
-        break; 
-      } 
-      // Left turn (angleNeeded > 0): errorRemaining approaches 0 from the positive side
+        break;
+      }
       else if (angleNeeded > 0 && errorRemaining <= STOP_THRESHOLD) {
-        break; 
+        break;
       }
     }
     delay(2);
   }
 
-  // Cut motor power and straighten front wheels
   setMotorSpeed(0);
   setServoAngle(SERVO_TRUE_STRAIGHT);
-  
-  // Pause to let chassis settle and print final resting heading
+
   delay(300);
   Serial.print(">>> TURN COMPLETE. Final Resting Heading: ");
   Serial.println(readHeading());
 }
 
-// ============================================================
-// 2. GO STRAIGHT ON EXPLICIT GLOBAL HEADING
-// ============================================================
-void goStraight(int cm, float targetHeading) {
+void goStraight(int cm, float heading) {
   const float TICKS_PER_CM        = 31.933;
   const float SERVO_TRUE_STRAIGHT = 69.0;
-  const int   BASE_SPEED          = 120; // Cruising speed
-  
-  // ============================================================
-  // TUNING PARAMETERS
-  // ============================================================
-  float Kp = 1.2; // Start here (adjust in Step 2)
-  float Kd = 0.3; // Start here (adjust in Step 3)
+  const int   BASE_SPEED          = 120;
+
+  float localKp = 1.2;
+  float localKd = 0.3;
 
   zeroEncoder();
   long targetTicks = (long)(cm * TICKS_PER_CM);
@@ -350,24 +430,16 @@ void goStraight(int cm, float targetHeading) {
       if (dt <= 0.0) dt = 0.001;
 
       float currentHeading = readHeading();
-      float error = targetHeading - currentHeading;
+      float error = heading - currentHeading;
 
-      // Wrap error between -180 and +180
       while (error > 180.0)  error -= 360.0;
       while (error < -180.0) error += 360.0;
 
       float dError = (error - prevError) / dt;
-      float correction = (Kp * error) + (Kd * dError);
+      float correction = (localKp * error) + (localKd * dError);
 
-      // SUBTRACT correction to ensure proper steering direction
       float newServoAngle = SERVO_TRUE_STRAIGHT - correction;
       setServoAngle(newServoAngle);
-
-      // Debug output (Open Serial Plotter at 115200 baud to visualize)
-      Serial.print("Heading:"); Serial.print(currentHeading);
-      Serial.print(",Target:"); Serial.print(targetHeading);
-      Serial.print(",Error:"); Serial.print(error);
-      Serial.print(",Servo:"); Serial.println(newServoAngle);
 
       prevError = error;
       prevTime = currentTime;
@@ -379,157 +451,225 @@ void goStraight(int cm, float targetHeading) {
   setServoAngle(SERVO_TRUE_STRAIGHT);
   delay(100);
 }
-void turnDegrees(float degree) {
-  // 1. Steering & Speed Constants
-  const float SERVO_TRUE_STRAIGHT = 69.0;
-  const float SERVO_MAX_RIGHT     = 115.0; 
-  const float SERVO_MAX_LEFT      = 5.0;  
-  const int   TURN_PWM            = 90;
 
-  // 2. Calculate target heading
-  float startHeading = readHeading();
-  
-  // Turning Right (+) decreases IMU angle (-), turning Left (-) increases IMU angle (+)
-  float targetHeading = startHeading - degree;
+/*
+ * driveUntilColorDetected()
+ *
+ * Drives straight, holding `heading`, while continuously watching the
+ * color sensor (filtered by `filterColor` -- pass COLOR_NONE during the
+ * initial search so either color can win, or pass the locked color
+ * afterwards so the other color is completely ignored).
+ *
+ * Returns the color that was detected, or COLOR_NONE if the safety
+ * distance cap (`maxCm`) was reached without any hit (fail-safe so the
+ * robot never drives forever if a block is missed / sensor glitches).
+ */
+BlockColor driveUntilColorDetected(float heading, BlockColor filterColor, float maxCm) {
+  const float localKp = 1.2;
+  const float localKd = 0.3;
 
-  // Wrap targetHeading within -180.0 to +180.0 range
-  while (targetHeading > 180.0)  targetHeading -= 360.0;
-  while (targetHeading < -180.0) targetHeading += 360.0;
+  zeroEncoder();
+  long safetyTicks = (long)(maxCm * TICKS_PER_CM);
 
-  // 3. Set wheel direction (+ is Right, - is Left)
-  if (degree > 0) {
-    setServoAngle(SERVO_MAX_RIGHT); // Steer Right
-  } else {
-    setServoAngle(SERVO_MAX_LEFT);  // Steer Left
+  float prevError = 0.0;
+  unsigned long prevTime = millis();
+
+  setMotorSpeed(BASE_SPEED);
+
+  while (abs(readEncoder()) < safetyTicks) {
+    if (myIMU.wasReset()) {
+      myIMU.enableGameRotationVector();
+    }
+
+    if (myIMU.getSensorEvent() && myIMU.getSensorEventID() == SENSOR_REPORTID_GAME_ROTATION_VECTOR) {
+      unsigned long currentTime = millis();
+      float dt = (currentTime - prevTime) / 1000.0;
+      if (dt <= 0.0) dt = 0.001;
+
+      float currentHeading = readHeading();
+      float error = heading - currentHeading;
+
+      while (error > 180.0)  error -= 360.0;
+      while (error < -180.0) error += 360.0;
+
+      float dError = (error - prevError) / dt;
+      float correction = (localKp * error) + (localKd * dError);
+
+      float newServoAngle = SERVO_TRUE_STRAIGHT - correction;
+      setServoAngle(newServoAngle);
+
+      prevError = error;
+      prevTime = currentTime;
+    }
+
+    BlockColor detected = detectColorDebounced(filterColor);
+    if (detected != COLOR_NONE) {
+      setMotorSpeed(0);
+      setServoAngle(SERVO_TRUE_STRAIGHT);
+      return detected;
+    }
+
+    delay(2);
   }
 
-  // FIX 1: Give physical servo time to move wheels BEFORE motor starts
-  delay(150);
+  // Safety cap reached without a detection.
+  setMotorSpeed(0);
+  setServoAngle(SERVO_TRUE_STRAIGHT);
+  return COLOR_NONE;
+}
 
-  // 4. Run motor at fixed turning speed
+void turnDegrees(float degree) {
+  const float SERVO_TRUE_STRAIGHT = 69.0;
+  const float SERVO_MAX_RIGHT     = 115.0;
+  const float SERVO_MAX_LEFT      = 5.0;
+  const int   TURN_PWM            = 90;
+
+  float startHeading = readHeading();
+  float finalTargetHeading = startHeading - degree;
+
+  while (finalTargetHeading > 180.0)  finalTargetHeading -= 360.0;
+  while (finalTargetHeading < -180.0) finalTargetHeading += 360.0;
+
+  if (degree > 0) {
+    setServoAngle(SERVO_MAX_RIGHT);
+  } else {
+    setServoAngle(SERVO_MAX_LEFT);
+  }
+
+  delay(150);
   setMotorSpeed(TURN_PWM);
 
-  // 5. Turn execution loop
   while (true) {
     if (myIMU.wasReset()) {
       myIMU.enableGameRotationVector();
     }
 
-    // FIX 2: Only process when a fresh Game Rotation report arrives
     if (myIMU.getSensorEvent() && myIMU.getSensorEventID() == SENSOR_REPORTID_GAME_ROTATION_VECTOR) {
-      
       float currentHeading = readHeading();
 
-      // Calculate remaining signed angle error
-      float errorRemaining = targetHeading - currentHeading;
+      float errorRemaining = finalTargetHeading - currentHeading;
       while (errorRemaining > 180.0)  errorRemaining -= 360.0;
       while (errorRemaining < -180.0) errorRemaining += 360.0;
 
-      // FIX 3: Direction-aware stop condition (prevents infinite spin on overshoot)
       if (degree > 0 && errorRemaining >= -2.0) {
-        break; // Right turn reached target (or slightly overshot)
-      } 
+        break;
+      }
       else if (degree < 0 && errorRemaining <= 2.0) {
-        break; // Left turn reached target (or slightly overshot)
+        break;
       }
     }
-    
-    delay(2); // Short yield delay for CPU stability
+    delay(2);
   }
 
-  // 6. Cut motor & reset steering straight
   setMotorSpeed(0);
   setServoAngle(SERVO_TRUE_STRAIGHT);
-  delay(100); // Brief pause to let chassis settle
+  delay(100);
 }
 
 // ============================================================
-// YOUR LOGIC GOES HERE
+// MAIN SETUP & LOOP
 // ============================================================
-// ============================================================
-// FSM STATES & SQUARE TRAJECTORY DATA
-// ============================================================
-enum RobotState {
-  STATE_INIT,
-  STATE_DRIVE,
-  STATE_TURN,
-  STATE_SETTLE,
-  STATE_FINISHED
-};
-
-RobotState currentState = STATE_INIT;
-
-// The 4 global absolute headings for a clockwise square:
-const float SQUARE_HEADINGS[4] = {0.0, -90.0, 180.0, 90.0};
-int currentSide = 0; // Tracks which of the 4 sides we are on
 
 void setup() {
   Serial.begin(115200);
   initHardware();
-  delay(2000); 
+  delay(2000);
 }
 
 void loop() {
-  // 1. MUST KEEP THIS ALIVE in loop() for fresh IMU data
-  if (myIMU.wasReset()) {
-    myIMU.enableGameRotationVector();
-  }
-  myIMU.getSensorEvent();
-
-  // 2. FSM LOGIC
+  // Finite State Machine
   switch (currentState) {
 
-    case STATE_INIT:
-      Serial.println(F("[FSM] STATE: INIT -> Zeroing Yaw to Global 0.0"));
-      zeroYaw(); // Set current physical position as 0.0 degrees
-      delay(1000); // Give you a second to step back
-      currentState = STATE_DRIVE;
+    case STATE_INIT: {
+      Serial.println(F("[FSM] STATE: INIT"));
+      lockedColor = COLOR_NONE;
+      detectionCount = 0;
+      targetHeading = readHeading(); // ~0.0, since zeroYaw() already ran in initHardware()
+      currentState = STATE_SEARCH_FIRST_COLOR;
       break;
+    }
 
-    case STATE_DRIVE:
-      Serial.print(F("[FSM] STATE: DRIVE -> Side "));
-      Serial.print(currentSide + 1);
-      Serial.print(F(" at Heading "));
-      Serial.println(SQUARE_HEADINGS[currentSide]);
-      
-      // Drive 100cm locked to the current side's global heading
-      goStraight(100, SQUARE_HEADINGS[currentSide]);
-      
-      currentState = STATE_TURN;
-      break;
+    case STATE_SEARCH_FIRST_COLOR: {
+      Serial.println(F("[FSM] STATE: SEARCH_FIRST_COLOR -> driving, watching for either color..."));
 
-    case STATE_TURN:
-      currentSide++; // Move to the next side
+      // No filter yet -- either orange or blue can win the lock.
+      BlockColor found = driveUntilColorDetected(targetHeading, COLOR_NONE, SEARCH_SAFETY_CM);
 
-      // Did we just finish the 4th side?
-      if (currentSide >= 4) {
-        Serial.println(F("[FSM] Returning to start orientation..."));
-        turnToHeading(0.0); // Re-align to original forward direction
-        currentState = STATE_FINISHED;
-      } 
+      if (found == COLOR_ORANGE) {
+        lockedColor = COLOR_ORANGE;
+        clockwiseMode = true; // orange first -> clockwise mode -> turn RIGHT
+        Serial.println(F("[FSM] LOCKED ON ORANGE -> Clockwise mode (right turns). Blue is now ignored."));
+        currentState = STATE_TURNING;
+      }
+      else if (found == COLOR_BLUE) {
+        lockedColor = COLOR_BLUE;
+        clockwiseMode = false; // blue first -> counterclockwise mode -> turn LEFT
+        Serial.println(F("[FSM] LOCKED ON BLUE -> Counterclockwise mode (left turns). Orange is now ignored."));
+        currentState = STATE_TURNING;
+      }
       else {
-        Serial.print(F("[FSM] STATE: TURN -> Heading to "));
-        Serial.println(SQUARE_HEADINGS[currentSide]);
-        
-        // Turn to the next absolute heading
-        turnToHeading(SQUARE_HEADINGS[currentSide]);
-        currentState = STATE_SETTLE;
+        // Safety cap reached with no detection at all -- retry the search.
+        Serial.println(F("[FSM] WARNING: no color found within safety distance. Retrying search."));
       }
       break;
+    }
 
-    case STATE_SETTLE:
-      // A brief pause ensures chassis momentum completely stops 
-      // before the forward PID loop violently takes over again
-      delay(500);
-      currentState = STATE_DRIVE;
+    case STATE_TURNING: {
+      detectionCount++;
+      Serial.print(F("[FSM] STATE: TURNING -> Detection #"));
+      Serial.print(detectionCount);
+      Serial.print(F(" / "));
+      Serial.println(TARGET_DETECTIONS);
+
+      float turnAmount = clockwiseMode ? 90.0 : -90.0; // +90 = right, -90 = left
+      turnDegrees(turnAmount);
+
+      // Trust the settled, actually-achieved heading rather than
+      // re-deriving it, so small turn overshoot/undershoot doesn't
+      // accumulate error in the straight-line PID target.
+      targetHeading = readHeading();
+
+      if (detectionCount >= TARGET_DETECTIONS) {
+        Serial.println(F("[FSM] Target detection count reached."));
+        currentState = STATE_FINAL_STRAIGHT;
+      } else {
+        currentState = STATE_DRIVE_TO_BLOCK;
+      }
       break;
+    }
 
-    case STATE_FINISHED:
-      Serial.println(F("[FSM] STATE: FINISHED -> Square Complete!"));
+    case STATE_DRIVE_TO_BLOCK: {
+      Serial.println(F("[FSM] STATE: DRIVE_TO_BLOCK -> driving, watching only for locked color..."));
+
+      // Filtered by lockedColor -- the other color is fully ignored
+      // at the sensor level and can't interfere with debounce state.
+      BlockColor found = driveUntilColorDetected(targetHeading, lockedColor, SEARCH_SAFETY_CM);
+
+      if (found == lockedColor) {
+        currentState = STATE_TURNING;
+      } else {
+        // Safety cap reached without seeing the locked color again.
+        Serial.println(F("[FSM] WARNING: safety cap reached without a new detection. Retrying."));
+      }
+      break;
+    }
+
+    case STATE_FINAL_STRAIGHT: {
+      Serial.print(F("[FSM] STATE: FINAL_STRAIGHT -> driving "));
+      Serial.print(FINAL_STRAIGHT_CM);
+      Serial.println(F("cm and stopping."));
+
+      goStraight(FINAL_STRAIGHT_CM, targetHeading);
+      currentState = STATE_FINISHED;
+      break;
+    }
+
+    case STATE_FINISHED: {
+      Serial.println(F("[FSM] STATE: FINISHED -> Run complete!"));
       setMotorSpeed(0);
-      setServoAngle(69.0);
-      // Wait forever
-      while(true) { delay(1000); }
+      setServoAngle(SERVO_TRUE_STRAIGHT);
+      while (true) { delay(1000); }
       break;
+    }
   }
 }
