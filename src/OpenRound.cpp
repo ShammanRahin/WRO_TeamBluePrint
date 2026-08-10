@@ -64,7 +64,8 @@ float Kd = 0.5; // Steering damping
 SPIClass SPI_IMU(PB5, PB4, PB3);
 Servo steeringServo;
 BNO08x myIMU;
-Adafruit_TCS34725 tcs = Adafruit_TCS34725(TCS34725_INTEGRATIONTIME_24MS, TCS34725_GAIN_1X);
+// Replace the old initialization with this one:
+Adafruit_TCS34725 tcs = Adafruit_TCS34725(TCS34725_INTEGRATIONTIME_2_4MS, TCS34725_GAIN_16X);
 
 bool tcsConnected = false;
 uint8_t tcsChannel = 0; // Multiplexer channel where TCS34725 is located
@@ -206,8 +207,9 @@ BlockColor detectColorDebounced(BlockColor filterColor = COLOR_NONE) {
   static int consecutiveHits = 0;
   static unsigned long lastDetectionTime = 0;
 
-  const int HITS_NEEDED = 3;              // Requires 3 consecutive positive loops
-  const unsigned long COOLDOWN_MS = 2000; // 2-second timeout between triggers
+  // Reduced to 2 hits for high-speed detection (~5ms total)
+  const int HITS_NEEDED = 2;              
+  const unsigned long COOLDOWN_MS = 2000; 
 
   if (millis() - lastDetectionTime < COOLDOWN_MS) {
     return COLOR_NONE;
@@ -224,17 +226,18 @@ BlockColor detectColorDebounced(BlockColor filterColor = COLOR_NONE) {
     float pB = ((float)b / totalLight) * 100.0;
 
     // ============================================================
-    // CALIBRATED COLOR THRESHOLDS
-    // ============================================================
-    // Blue Object:  R% ~14-21%, B% ~39-43%
-    // Orange Object: R% ~46-48%, B% ~13-14%
-    // Floor (Ref):   R% ~31%,    B% ~28%
+    // CALIBRATED COLOR THRESHOLDS (2.4ms / 16X Gain)
+    // Blue Object:  R% ~19%, B% ~42%
+    // Orange Object: R% ~40%, B% ~23%
+    // Floor (Ref):   R% ~26-30%, B% ~30%
     // ============================================================
 
-    if (pB > 35.0 && pR < 25.0) {
+    // Blue Check
+    if (pB > 36.0 && pR < 24.0) {
       rawColor = COLOR_BLUE;
     }
-    else if (pR > 42.0 && pB < 20.0) {
+    // Orange Check
+    else if (pR > 35.0 && pB < 27.0) {
       rawColor = COLOR_ORANGE;
     }
   }
