@@ -24,19 +24,24 @@ enum BlockColor { COLOR_NONE, COLOR_ORANGE, COLOR_BLUE };
 //      ORANGE first -> clockwise      -> turn RIGHT every corner
 //      BLUE   first -> counterclockwise -> turn LEFT  every corner
 //
-// 2. Keep driving and cross the OTHER line of that same corner.
-//    The distance between the two crossings tells us how far out
-//    in the lane we are:
+// 2. Turn 90 degrees. Because the two lines fan out from a point,
+//    the SECOND line of that same corner is normally crossed
+//    partway through the arc of this turn, not while still going
+//    straight - so we watch for it DURING the turn instead of
+//    driving further first. The distance between the two crossings
+//    (still measured in encoder ticks, whether that distance was
+//    covered straight or mid-turn) tells us how far out in the lane
+//    we are:
 //      small gap = we have drifted IN toward the inner square
 //      large gap = we are OUT near the outer wall
+//    We also save the heading we actually settled at once the turn
+//    finishes.
 //
-// 3. Turn 90 degrees, then save the heading we actually settled at.
-//
-// 4. Steer sideways for a fixed distance to undo the drift, then
+// 3. Steer sideways for a fixed distance to undo the drift, then
 //    turn back onto that saved heading. Now we are back in the
 //    middle of the lane AND pointing the right way.
 //
-// 5. After 12 corners (3 laps), drive 100cm straight and stop.
+// 4. After 12 corners (3 laps), drive 100cm straight and stop.
 //
 // WHY THIS IS NEEDED: every 90 degree turn ends slightly imperfect,
 // so the robot creeps toward the inner square a little more each
@@ -47,10 +52,12 @@ enum BlockColor { COLOR_NONE, COLOR_ORANGE, COLOR_BLUE };
 // ------------------------------------------------------------
 // FSM STATES
 //
-// DRIVE_TO_CORNER  drive straight until both lines of a corner
-//                  have been crossed and the gap measured
-// TURNING          turn 90 degrees, then save the heading we
-//                  actually settled at
+// DRIVE_TO_CORNER  drive straight until the FIRST line of a corner
+//                  has been crossed (the second line is now found
+//                  during the turn that follows, not here)
+// TURNING          turn 90 degrees, watching for the second line of
+//                  the corner along the way to measure the gap,
+//                  then save the heading we actually settled at
 // LANE_CORRECT     shuffle sideways to undo the drift, then
 //                  realign to that saved heading
 // FINAL_STRAIGHT   after 12 corners, drive 100cm and stop
@@ -105,11 +112,10 @@ const float SEARCH_SAFETY_CM = 400.0;   // never drive forever without a line
 // ============================================================
 const float GAP_THRESHOLD_CM       = 25.0;  // MUST calibrate on the real mat
 const float GAP_DEADBAND_CM        =  2.0;  // ignore corrections smaller than this
-const float K_LAT_DEG_PER_CM       =  1.5;  // servo degrees per cm of error
+const float K_LAT_DEG_PER_CM       =  .8;  // servo degrees per cm of error
 const float MAX_LAT_OFFSET_DEG     = 30.0;  // clamp (servo limit is 46 either way)
-const float CORRECTION_DISTANCE_CM = 20.0;  // fixed travel during a correction
-const float SECOND_LINE_MAX_CM     = 60.0;  // give up waiting for the partner line
-const float POST_CORNER_LOCKOUT_CM = 30.0;  // ignore lines just after leaving a corner
+const float CORRECTION_DISTANCE_CM = 7.0;  // fixed travel during a correction
+const float POST_CORNER_LOCKOUT_CM = 20;  // ignore lines just after leaving a corner
 const int   CORRECTION_SIGN        =   +1;  // flip to -1 if corrections go backwards
 const int   CORRECTION_PWM         =   90;  // slower than BASE_SPEED, more control
 
@@ -126,8 +132,11 @@ float targetHeading = 0.0;   // heading held while driving a straight
 float laneHeading   = 0.0;   // heading saved right after a 90 degree turn
 
 // Results of the most recent corner. Plain globals, no structs.
-float      lastGapCm      = 0.0;        // distance between the two lines
-BlockColor lastFirstColor = COLOR_NONE; // which colour we crossed first
+float      lastGapCm       = 0.0;        // distance between the two lines
+BlockColor lastFirstColor  = COLOR_NONE; // which colour we crossed first
+long       cornerFirstTicks = 0;         // encoder count at the moment the first
+                                          // line was crossed - the zero point the
+                                          // turn's gap measurement counts from
 
 // ============================================================
 // MULTIPLEXER HELPER
@@ -244,14 +253,12 @@ void readColor(uint16_t &r, uint16_t &g, uint16_t &b, uint16_t &c) {
 // ------------------------------------------------------------
 // COLOUR DETECTION
 //
-// The old version had a 2 second cooldown after every detection.
-// That made it impossible to see the second line at a corner, so
-// no gap could ever be measured.
-//
-// Instead we now "arm" the detector to one specific colour. It
+// No cooldown - the detector is "armed" to one specific colour and
 // throws away everything else. Because we arm it to the OTHER
 // colour when looking for the second line, it is impossible to
 // re-trigger on the same physical line, so no cooldown is needed.
+// This also means it's safe to call from inside a turn: a stray
+// colour it isn't armed for just gets ignored.
 // ------------------------------------------------------------
 
 BlockColor pendingColor    = COLOR_NONE;  // colour we are currently counting
@@ -530,9 +537,33 @@ void goStraight(int cm, float heading) {
   delay(100);
 }
 
-// Turn by a relative amount. Positive = RIGHT, negative = LEFT.
+// ------------------------------------------------------------
+// Turn by a relative amount (positive = RIGHT, negative = LEFT),
+// AND measure the corner gap along the way.
+//
+// The two lines of a corner fan out from the inner square, so the
+// partner line is normally crossed partway through this turn's arc
+// rather than while still driving straight - so instead of a
+// separate "keep driving until we see line two" phase, we just
+// watch for it here, during the turn we were going to make anyway.
+//
+// Encoder ticks are NOT reset at the start of this function: they
+// keep counting from the zero point driveToCorner() established, so
+// (readEncoder() - cornerFirstTicks) is the total distance travelled
+// since the first line, whether that distance was covered straight
+// or mid-turn. Sets lastGapCm.
+//
+// If the partner line is never seen before the turn finishes, falls
+// back to GAP_THRESHOLD_CM (the correction becomes a no-op, but we
+// still finish the turn - we've already passed the corner marker,
+// so not turning means driving into the wall).
+// ------------------------------------------------------------
 void turnDegrees(float degree) {
   const int TURN_PWM = 90;
+
+  BlockColor wantSecond = otherColor(lastFirstColor);
+  resetColorDetector();
+  bool gotSecond = false;
 
   float startHeading       = readHeading();
   float finalTargetHeading = startHeading - degree;   // right = decreasing heading
@@ -564,6 +595,19 @@ void turnDegrees(float degree) {
       if (degree > 0 && errorRemaining >= -2.0) break;
       if (degree < 0 && errorRemaining <=  2.0) break;
     }
+
+    // Watch for the corner's partner line while we arc through the turn.
+    if (!gotSecond && detectColor(wantSecond) != COLOR_NONE) {
+      long travelled = readEncoder() - cornerFirstTicks;   // read ONCE
+      if (travelled < 0) travelled = -travelled;
+      lastGapCm = (float)travelled / TICKS_PER_CM;
+      gotSecond = true;
+
+      Serial.print(F("  partner line seen mid-turn, gap="));
+      Serial.print(lastGapCm);
+      Serial.println(F(" cm"));
+    }
+
     delay(2);
   }
 
@@ -571,21 +615,28 @@ void turnDegrees(float degree) {
   setServoAngle(SERVO_TRUE_STRAIGHT);
   delay(100);
 
+  if (!gotSecond) {
+    lastGapCm = GAP_THRESHOLD_CM;
+    Serial.println(F("  WARN: partner line missed during turn, skipping correction"));
+  }
+
   Serial.print(F(">>> TURN COMPLETE. Resting heading: "));
   Serial.println(readHeading());
 }
 
 // ============================================================
-// CORNER MEASUREMENT
+// CORNER MEASUREMENT - PHASE A ONLY
 //
-// Drives straight until BOTH lines of a corner have been crossed,
-// and records how far apart they were.
+// Drives straight until the FIRST line of a corner is crossed.
+// The second line is no longer looked for here - turnDegrees()
+// finds it during the 90 degree turn that follows.
 //
 // Results come back in globals (kept simple, no structs):
-//   lastGapCm      - distance between the two lines
-//   lastFirstColor - which colour we crossed first
+//   lastFirstColor   - which colour we crossed first
+//   cornerFirstTicks - encoder count at the moment of that crossing,
+//                       the zero point turnDegrees() measures from
 //
-// Returns true if a corner was crossed, false if we drove the full
+// Returns true if a line was crossed, false if we drove the full
 // safety distance without seeing anything.
 // ============================================================
 bool driveToCorner(float heading) {
@@ -602,9 +653,7 @@ bool driveToCorner(float heading) {
   long lockoutTicks = (long)(POST_CORNER_LOCKOUT_CM * TICKS_PER_CM);
   long safetyTicks  = (long)(SEARCH_SAFETY_CM * TICKS_PER_CM);
 
-  // ---------- PHASE A: find the first line ----------
-  BlockColor firstSeen  = COLOR_NONE;
-  long       firstTicks = 0;
+  BlockColor firstSeen = COLOR_NONE;
 
   while (true) {
     long ticksNow = readEncoder();          // read ONCE, never inside abs()
@@ -617,61 +666,26 @@ bool driveToCorner(float heading) {
     if (ticksNow > lockoutTicks) {
       firstSeen = detectColor(wantFirst);
       if (firstSeen != COLOR_NONE) {
-        firstTicks = readEncoder();
+        cornerFirstTicks = readEncoder();
         break;
       }
     }
     delay(2);
   }
 
+  setMotorSpeed(0);
+  setServoAngle(SERVO_TRUE_STRAIGHT);
+
   if (firstSeen == COLOR_NONE) {
-    setMotorSpeed(0);
-    setServoAngle(SERVO_TRUE_STRAIGHT);
     return false;
-  }
-
-  // ---------- PHASE B: find the partner line ----------
-  BlockColor wantSecond     = otherColor(firstSeen);
-  long       maxSecondTicks = (long)(SECOND_LINE_MAX_CM * TICKS_PER_CM);
-  bool       gotSecond      = false;
-
-  resetColorDetector();
-
-  while (true) {
-    long travelled = readEncoder() - firstTicks;   // read ONCE
-    if (travelled < 0) travelled = -travelled;
-    if (travelled >= maxSecondTicks) break;        // partner line missed
-
-    updateHeadingPid(heading);
-
-    if (detectColor(wantSecond) != COLOR_NONE) {
-      lastGapCm = (float)travelled / TICKS_PER_CM;
-      gotSecond = true;
-      break;
-    }
-    delay(2);
-  }
-
-  // If the partner line was missed, pretend the gap was exactly on
-  // target. That makes the correction zero, and we still turn.
-  // Never stall here - we have already passed the corner marker,
-  // so not turning means driving into the wall.
-  if (!gotSecond) {
-    lastGapCm = GAP_THRESHOLD_CM;
-    Serial.println(F("  WARN: partner line missed, skipping correction"));
   }
 
   lastFirstColor = firstSeen;
 
-  setMotorSpeed(0);
-  setServoAngle(SERVO_TRUE_STRAIGHT);
-
   Serial.print(F("CORNER  first="));
   if (firstSeen == COLOR_ORANGE) Serial.print(F("ORANGE"));
   else                           Serial.print(F("BLUE"));
-  Serial.print(F("  gap="));
-  Serial.print(lastGapCm);
-  Serial.println(F(" cm"));
+  Serial.println();
 
   return true;
 }
@@ -802,6 +816,7 @@ void loop() {
       Serial.print(F(" / "));
       Serial.println(TARGET_CORNERS);
 
+      // Turns 90 degrees AND measures the corner gap mid-turn.
       turnDegrees(clockwiseMode ? 90.0 : -90.0);
 
       // Save where we actually ended up, not where we aimed.
