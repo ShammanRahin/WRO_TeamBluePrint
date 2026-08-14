@@ -1,24 +1,16 @@
-# Electromechanical diagrams
+﻿# schemes
 
-Wiring and connection diagrams for the vehicle.
+The electromechanical connection diagram(s): every electronic component and motor, and how they
+connect. WRO asks for this as one or more JPEG/PNG/PDF schematics.
 
-| File | Shows |
-|---|---|
-| `stm32_wiring.svg` | **Full STM32F411 pin-level wiring** — every allocated pin, its peripheral, and what it connects to. Colour-coded by bus type. |
-| `wiring_block_diagram.png` | System-level block diagram — power domains and major subsystems |
+## What belongs here
 
-Pin-level detail, harness pinouts, the power budget and the bring-up order live in
-[`../electrical/ELECTRICAL.md`](../electrical/ELECTRICAL.md). These diagrams are the
-visual form of the same information.
+- A single connection/wiring diagram showing the STM32, BTS7960 + motor, MG996R servo, BNO085,
+  the TCA9548A multiplexer with the three VL53L1X and the TCS34725, the encoder, the Raspberry
+  Pi + camera, and the four power rails meeting at one star ground.
+- Export as PNG or PDF so it renders on GitHub and prints cleanly.
 
-## Regenerating
+Keep the diagram in agreement with `../electrical/README.md` and `../SPECSHEET.md` - if a pin
+moves, update all three.
 
-`wiring_block_diagram.png` is generated:
-
-```bash
-python3 electrical/make_block_diagram.py
-```
-
-`stm32_wiring.svg` is hand-maintained. If the pin map in `electrical/ELECTRICAL.md` §5
-changes, update the SVG in the same commit — a wiring diagram that disagrees with the pin
-map is worse than no diagram.
+Files: `wiring.png` (or .pdf) - the connection diagram (add)
