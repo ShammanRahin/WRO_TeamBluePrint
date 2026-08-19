@@ -39,7 +39,6 @@ enum BlockColor { COLOR_NONE, COLOR_ORANGE, COLOR_BLUE };
 
 enum RobotState {
   STATE_INIT,
-  STATE_WAIT_START,              // <-- added
   STATE_DRIVE_TO_CORNER,
   STATE_TURNING,
   STATE_LANE_CORRECT,
@@ -225,7 +224,10 @@ void tcaselect(uint8_t channel) {
   Wire.endTransmission();
 }
 
+bool motorsEnabled = false;      // flipped by the start button; gates the driver
+
 void setMotorSpeed(int speed) {
+  if (!motorsEnabled) speed = 0;              // button is off -> wheels stay still
   speed = constrain(speed, -255, 255);
   if (speed > 0)      { analogWrite(RPWM_PIN, speed); analogWrite(LPWM_PIN, 0); }
   else if (speed < 0) { analogWrite(RPWM_PIN, 0);     analogWrite(LPWM_PIN, -speed); }
@@ -909,14 +911,39 @@ void finalStraightStep() {
 }
 
 // ============================================================
-// START BUTTON  (PA5 active-low, blocking wait - car not moving yet)
+// START BUTTON  (PA5 active-low) - NON-BLOCKING MOTOR TOGGLE
+// The FSM never waits on it. Every press flips motorsEnabled; while that
+// is false, setMotorSpeed() forces 0 and the car simply doesn't roll -
+// sensors, colour gate, vision, PID and the state machine all keep running.
 // ============================================================
-void waitForStart() {
-  Serial.println(F("[FSM] waiting for START button (PA5 -> GND)"));
-  while (digitalRead(START_BTN_PIN) == HIGH) { delay(5); }   // wait for press (LOW)
-  delay(30);                                                 // debounce
-  while (digitalRead(START_BTN_PIN) == LOW)  { delay(5); }   // wait for release
-  Serial.println(F("[FSM] START"));
+const unsigned long BTN_DEBOUNCE_MS = 40;
+bool          btnPrevLow  = false;
+unsigned long btnLastEdge = 0;
+bool          hasLaunched = false;   // first enable = the gun
+
+void serviceStartButton() {
+  bool low = (digitalRead(START_BTN_PIN) == LOW);          // pressed = LOW
+  if (low != btnPrevLow && (millis() - btnLastEdge) >= BTN_DEBOUNCE_MS) {
+    btnLastEdge = millis();
+    btnPrevLow  = low;
+    if (low) {                                            // act on press only
+      motorsEnabled = !motorsEnabled;
+      if (motorsEnabled) {
+        if (!hasLaunched) {          // zero the reference at the real start
+          hasLaunched   = true;
+          laneHeading   = readHeading();
+          targetHeading = laneHeading;
+          zeroEncoder();
+          dcBaseTicks   = 0;
+        }
+        resetHeadingPid();
+        Serial.println(F("[BTN] motors ENABLED"));
+      } else {
+        setMotorSpeed(0);            // gate already forces 0, this stops it now
+        Serial.println(F("[BTN] motors DISABLED"));
+      }
+    }
+  }
 }
 
 // ============================================================
@@ -930,6 +957,7 @@ void setup() {
 
 void loop() {
   serviceSensors();
+  serviceStartButton();          // non-blocking: only toggles the motor gate
 
   switch (currentState) {
     case STATE_INIT:
@@ -941,16 +969,8 @@ void loop() {
       laneHeading   = readHeading();
       targetHeading = laneHeading;
       zeroEncoder();                 // segment origin = start position
-      setMotorSpeed(0);
       setServoAngle(SERVO_TRUE_STRAIGHT);
-      goState(STATE_WAIT_START);
-      break;
-
-    case STATE_WAIT_START:
-      waitForStart();
-      laneHeading   = readHeading();   // re-zero the reference at the gun
-      targetHeading = laneHeading;
-      zeroEncoder();                   // segment origin = start position
+      Serial.println(F("[BTN] press PA5 to enable motors"));
       goState(STATE_DRIVE_TO_CORNER);
       break;
 
