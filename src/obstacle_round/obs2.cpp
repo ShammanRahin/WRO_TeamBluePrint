@@ -18,18 +18,42 @@
 //          "V,<colour>,<dx>,<area>"  colour = R | G | N
 //          OFFSET-BASED avoidance: the pillar's own position (dx) sets
 //          how far we move; the pass-side ToF is only a SAFETY FLOOR,
-//          never the target (that was the wall-following flaw). We swerve
-//          to the computed offset, hold heading until the colour leaves
-//          the frame, then come back the SAME remembered displacement.
+//          never the target. We swerve to the computed offset, hold
+//          heading until the colour leaves the frame, then come back the
+//          SAME remembered displacement.
 //              GREEN -> pass on the LEFT   (steer left, watch LEFT  ToF)
 //              RED   -> pass on the RIGHT  (steer right, watch RIGHT ToF)
 //
 //   FRONT FAILSAFE: while avoiding, if the front ToF < 200 mm we are
 //          about to clip something -> reverse on the last steering angle,
 //          temporarily increase the swerve angle, then push forward again.
-//          After the pillar is cleared the swerve angle returns to base.
 //
 //   No parking. 3 laps = 12 corners.
+//
+// ------------------------------------------------------------
+//   TURN PRIORITY (this build)
+//
+//   The turn triggers are checked ONCE PER LOOP, in loop() itself, before
+//   the state machine runs. If they fire in DRIVE, AVOID or LANE_CORRECT,
+//   the car drops whatever it was doing and enters STATE_TURNING, then
+//   carries on normally from there. Nothing can outrank a corner.
+//
+//   Guards that keep that from misfiring:
+//     - MIN_TURN_SPACING_CM since the last corner (encoder is zeroed at
+//       the end of every turn, so this is just |readEncoder()|)
+//     - cornerCount < TARGET_CORNERS (no 13th corner on the run-in)
+//     - leftSeen / rightSeen: a side only counts as "gave way" if a wall
+//       was actually seen there earlier on THIS straight
+//     - frontIsWall(): a big, roughly centred pillar is not a front wall
+//     - commitTurn(): refuses to turn if the direction is unknown, instead
+//       of silently defaulting to counterclockwise
+//
+//   Per-straight state (colour gate, gap, seen-walls) now lives in
+//   beginStraight(), called once when a straight begins - NOT in the DRIVE
+//   entry block. That is what fixes the original bug: re-entering DRIVE
+//   after an avoidance no longer wipes the latched corner line, so the
+//   partner line can never be mistaken for the first one and lock the
+//   wrong turn direction.
 // ============================================================
 #define TCA_ADDR 0x70
 #define PiSerial Serial          // Pi link IS USART1 on this board
@@ -79,6 +103,9 @@ const uint16_t TOF_MAX_VALID_MM = 1300;
 const float    SIGNAL_MIN_MCPS  = 4.0;
 const uint16_t FRONT_TURN_MM    = 700;
 const unsigned long SIDE_INVALID_MS = 40;   // watched-side invalid this long = wall gave way
+const uint16_t SIDE_SEEN_MM         = 900;  // a wall this close counts as "seen" on this straight
+const int      FRONT_PILLAR_DX      = 70;   // |dx| under this = pillar is in the front ToF beam
+const float    MIN_TURN_SPACING_CM  = 20.0; // no second corner within this distance of the last
 // ============================================================
 // RUN CONSTANTS
 // ============================================================
@@ -264,6 +291,31 @@ void serviceOneToF(VL53L1X &s, bool present, uint8_t ch, uint16_t &mm, bool &val
     if (ok) mm = d;
   }
 }
+// ---- side-wall "gave way" detection, BOTH sides, always running ----
+// A side only counts as open if a wall was actually seen there earlier on
+// this straight. Without that, a far outer wall (permanently invalid) would
+// look like a corner the moment the turn triggers got priority.
+unsigned long leftInvalidStart = 0, rightInvalidStart = 0;
+bool leftOpen = false, rightOpen = false;
+bool leftSeen = false, rightSeen = false;
+void serviceOpenSides() {
+  if (tofLeftValid) {
+    leftInvalidStart = 0;
+    leftOpen = false;
+    if (tofLeft <= SIDE_SEEN_MM) leftSeen = true;
+  } else if (tofLok && leftSeen) {
+    if (leftInvalidStart == 0) leftInvalidStart = millis();
+    if (millis() - leftInvalidStart >= SIDE_INVALID_MS) leftOpen = true;
+  }
+  if (tofRightValid) {
+    rightInvalidStart = 0;
+    rightOpen = false;
+    if (tofRight <= SIDE_SEEN_MM) rightSeen = true;
+  } else if (tofRok && rightSeen) {
+    if (rightInvalidStart == 0) rightInvalidStart = millis();
+    if (millis() - rightInvalidStart >= SIDE_INVALID_MS) rightOpen = true;
+  }
+}
 // cached sensor readings, refreshed every loop
 bool          gImuFresh = false;
 float         gHeading  = 0.0;
@@ -286,6 +338,7 @@ void serviceSensors() {
   serviceOneToF(tofF, tofFok, CH_FRONT, tofFront, tofFrontValid);
   serviceOneToF(tofL, tofLok, CH_LEFT,  tofLeft,  tofLeftValid);
   serviceOneToF(tofR, tofRok, CH_RIGHT, tofRight, tofRightValid);
+  serviceOpenSides();
   serviceVision();
 }
 // ============================================================
@@ -439,13 +492,12 @@ long       cornerFirstTicks = 0;
 bool       gapMeasured      = false;
 float gapRefCm  = GAP_THRESHOLD_CM;
 bool  gapRefSet = false;
-BlockColor dcWantFirst;
-bool       dcFirstTurn;
-bool       dcColorArmed;
-long       dcBaseTicks;
-long       dcLockoutTicks;
-long       dcSafetyTicks;
-unsigned long sideInvalidStart = 0;
+BlockColor dcWantFirst    = COLOR_NONE;
+bool       dcFirstTurn    = true;
+bool       dcColorArmed   = false;
+long       dcBaseTicks    = 0;
+long       dcLockoutTicks = 0;
+long       dcSafetyTicks  = 0;
 float      turnTarget;
 float      turnAmount;
 BlockColor turnPartner;
@@ -472,6 +524,138 @@ void finishLaneCorrect() {
   targetHeading = laneHeading;
   if (cornerCount >= TARGET_CORNERS) goState(STATE_FINAL_STRAIGHT);
   else                               goState(STATE_DRIVE_TO_CORNER);
+}
+// ============================================================
+// BEGIN A NEW STRAIGHT
+// Called once when a straight starts (at the gun, and at the end of every
+// turn - the encoder has just been zeroed). NOT in the DRIVE entry block,
+// so re-entering DRIVE after an avoidance cannot wipe the corner context.
+// ============================================================
+void beginStraight() {
+  dcWantFirst  = lockedColor;
+  dcFirstTurn  = (lockedColor == COLOR_NONE);
+  dcColorArmed = false;
+  gapMeasured  = false;
+  resetColorDetector();
+  leftInvalidStart = rightInvalidStart = 0;
+  leftOpen = rightOpen = false;
+  leftSeen = rightSeen = false;          // a wall must be SEEN before it can give way
+  dcBaseTicks    = readEncoder();
+  dcLockoutTicks = (cornerCount > 0) ? (long)(POST_CORNER_LOCKOUT_CM * TICKS_PER_CM) : 0;
+  dcSafetyTicks  = (long)(SEARCH_SAFETY_CM * TICKS_PER_CM);
+}
+// ============================================================
+// CORNER LINE SERVICE  (runs in DRIVE, AVOID and LANE_CORRECT)
+// A line crossed during a swerve is still latched, so an avoidance can no
+// longer destroy the evidence that decides the turn direction.
+// ============================================================
+void serviceCornerLine() {
+  if (!dcColorArmed) {
+    BlockColor c = detectColor(dcWantFirst);
+    if (c != COLOR_NONE) {
+      dcColorArmed     = true;
+      cornerFirstTicks = readEncoder();
+      if (dcFirstTurn) lastFirstColor = c;
+      resetColorDetector();
+      Serial.print(F("  colour gate armed: "));
+      Serial.println(c == COLOR_ORANGE ? F("ORANGE") : F("BLUE"));
+    }
+    return;
+  }
+  if (!gapMeasured && otherColor(lastFirstColor) != COLOR_NONE &&
+      detectColor(otherColor(lastFirstColor)) != COLOR_NONE) {
+    long tr = absEnc(readEncoder() - cornerFirstTicks);
+    lastGapCm   = (float)tr / TICKS_PER_CM;
+    gapMeasured = true;
+    Serial.print(F("  partner line pre-turn, gap="));
+    Serial.print(lastGapCm); Serial.println(F(" cm"));
+  }
+}
+// ============================================================
+// TURN TRIGGERS  -  HIGHEST PRIORITY, evaluated in loop()
+// ============================================================
+bool frontIsWall() {
+  if (!tofFrontValid || tofFront > FRONT_TURN_MM) return false;
+  // a big, roughly centred pillar sits in the front beam: that is not a wall
+  if (pillarEngaged() && abs(vis.dx) < FRONT_PILLAR_DX) return false;
+  return true;
+}
+bool sideGaveWay() {
+  if (lockedColor == COLOR_NONE) return (leftOpen || rightOpen);   // direction not known yet
+  return clockwiseMode ? rightOpen : leftOpen;                     // watch the inner wall
+}
+bool turnTriggered() {
+  bool noRange = (!tofFok) && (!tofLok) && (!tofRok);
+  return frontIsWall() || sideGaveWay() || (noRange && dcColorArmed);
+}
+unsigned long lastAmbigWarn = 0;
+// Commits to STATE_TURNING. Returns false only when the direction is
+// genuinely unknown - in that case we keep driving and keep looking.
+bool commitTurn() {
+  if (lockedColor == COLOR_NONE) {
+    BlockColor dir = lastFirstColor;
+    if (dir == COLOR_NONE) {                 // line was missed - use the open side
+      if (rightOpen && !leftOpen)      dir = COLOR_ORANGE;
+      else if (leftOpen && !rightOpen) dir = COLOR_BLUE;
+      else {
+        if (millis() - lastAmbigWarn > 500) {
+          lastAmbigWarn = millis();
+          Serial.println(F("  turn trigger but direction UNKNOWN -> holding"));
+        }
+        return false;
+      }
+    }
+    lockedColor   = dir;
+    clockwiseMode = (dir == COLOR_ORANGE);
+    Serial.println(clockwiseMode
+      ? F("[FSM] LOCKED ORANGE -> CLOCKWISE (right turns)")
+      : F("[FSM] LOCKED BLUE -> COUNTERCLOCKWISE (left turns)"));
+  }
+  // distance bookkeeping only means anything if the corner line was seen
+  if (dcColorArmed) {
+    float segCm = absEnc(cornerFirstTicks) / TICKS_PER_CM;
+    if (cornerCount == 0) {
+      firstSegmentCm = segCm;
+      Serial.print(F("[DIST] A start->turn1 = ")); Serial.print(firstSegmentCm); Serial.println(F(" cm"));
+    } else if (cornerCount == 4) {
+      fullStartStraightCm = segCm; haveFullStraight = true;
+    } else if (cornerCount == 8 && haveFullStraight) {
+      fullStartStraightCm = 0.5 * (fullStartStraightCm + segCm);
+    }
+    if (haveFullStraight) {
+      finalDistanceCm = fullStartStraightCm - firstSegmentCm;
+      if (finalDistanceCm < 0) finalDistanceCm = 0;
+    }
+  } else {
+    Serial.println(F("  WARN: turning without a latched line (distances kept)"));
+  }
+  goState(STATE_TURNING);
+  return true;
+}
+void logTurnReason() {
+  if (frontIsWall())      Serial.println(F("  turn: FRONT close"));
+  else if (sideGaveWay()) Serial.println(rightOpen ? F("  turn: RIGHT wall gone")
+                                                   : F("  turn: LEFT wall gone"));
+  else                    Serial.println(F("  turn: colour-only (no range sensors)"));
+}
+// ---- the global pre-empt, called every loop from loop() ----
+void abortForCorner() {
+  // whatever sub-maneuver was running is dropped; TURNING owns the car now
+  avoidPhase    = 0;
+  avoidSteerDeg = AVOID_STEER_DEG;
+  resetHeadingPid();
+}
+void serviceTurnPriority() {
+  if (currentState != STATE_DRIVE_TO_CORNER &&
+      currentState != STATE_AVOID &&
+      currentState != STATE_LANE_CORRECT) return;
+  serviceCornerLine();                       // gate stays alive in all three
+  if (cornerCount >= TARGET_CORNERS) return; // no 13th corner
+  if (absEnc(readEncoder()) < (long)(MIN_TURN_SPACING_CM * TICKS_PER_CM)) return;
+  if (!turnTriggered()) return;
+  logTurnReason();
+  if (currentState == STATE_AVOID) Serial.println(F("[AVOID] aborted - corner has priority"));
+  if (commitTurn()) abortForCorner();
 }
 // ============================================================
 // OFFSET-BASED PILLAR AVOIDANCE
@@ -573,7 +757,7 @@ void avoidStep() {
         resetHeadingPid();
         setMotorSpeed(BASE_SPEED);
         Serial.println(F("[AVOID] done, back to centre"));
-        goState(STATE_DRIVE_TO_CORNER);
+        goState(STATE_DRIVE_TO_CORNER);         // corner context is untouched
       }
       break;
     case 6:     // BACKUP: reverse on last angle, then boost swerve and retry
@@ -595,95 +779,29 @@ void avoidStep() {
 }
 // ============================================================
 // STATE: DRIVE TO CORNER
+// Turn triggers and the colour gate are handled in loop() now, so this
+// state only holds the lane, watches the safety distance and hands off to
+// pillar avoidance.
 // ============================================================
 void driveStep() {
   if (!entered) {
     entered = true;
     Serial.println(F("[FSM] DRIVE_TO_CORNER"));
-    dcWantFirst = lockedColor;
-    dcFirstTurn = (lockedColor == COLOR_NONE);
-    resetColorDetector();
     resetHeadingPid();
-    dcBaseTicks = readEncoder();
     setMotorSpeed(BASE_SPEED);
-    dcColorArmed   = false;
-    gapMeasured    = false;
-    sideInvalidStart = 0;
-    dcLockoutTicks = (cornerCount > 0) ? (long)(POST_CORNER_LOCKOUT_CM * TICKS_PER_CM) : 0;
-    dcSafetyTicks  = (long)(SEARCH_SAFETY_CM * TICKS_PER_CM);
   }
   long straightTicks = absEnc(readEncoder() - dcBaseTicks);
   if (straightTicks >= dcSafetyTicks) {
-    Serial.println(F("[FSM] WARN: no line within safety distance, retrying"));
-    entered = false;
+    Serial.println(F("[FSM] WARN: no corner within safety distance, re-baselining"));
+    dcBaseTicks = readEncoder();
     return;
   }
   updateHeadingPid(targetHeading);
-  if (straightTicks <= dcLockoutTicks) return;
-  // ---- turn triggers (floor colour gate + wall) computed first ----
-  bool expectedCW  = dcFirstTurn ? (lastFirstColor == COLOR_ORANGE) : clockwiseMode;
-  bool sidePresent = expectedCW ? tofRok : tofLok;
-  bool sideValid   = expectedCW ? tofRightValid : tofLeftValid;
-  bool frontClose  = tofFrontValid && (tofFront <= FRONT_TURN_MM);
-  // ---- OFFSET-BASED PILLAR AVOIDANCE (don't pre-empt a real corner) ----
-  if (pillarEngaged() && !(frontClose && dcColorArmed)) {
+  if (straightTicks <= dcLockoutTicks) return;   // gates AVOIDANCE only, never the turn
+  if (pillarEngaged()) {
     startAvoid();
     goState(STATE_AVOID);
     return;
-  }
-  if (!dcColorArmed) {
-    BlockColor c = detectColor(dcWantFirst);
-    if (c != COLOR_NONE) {
-      dcColorArmed = true;
-      cornerFirstTicks = readEncoder();
-      if (dcFirstTurn) lastFirstColor = c;
-      sideInvalidStart = 0;
-      resetColorDetector();
-      Serial.print(F("  colour gate armed: "));
-      Serial.println(c == COLOR_ORANGE ? F("ORANGE") : F("BLUE"));
-    }
-    return;
-  }
-  if (!gapMeasured && detectColor(otherColor(lastFirstColor)) != COLOR_NONE) {
-    long tr = absEnc(readEncoder() - cornerFirstTicks);
-    lastGapCm = (float)tr / TICKS_PER_CM;
-    gapMeasured = true;
-    Serial.print(F("  partner line pre-turn, gap="));
-    Serial.print(lastGapCm); Serial.println(F(" cm"));
-  }
-  bool sideConfirmed = false;
-  if (sidePresent && !sideValid) {
-    if (sideInvalidStart == 0) sideInvalidStart = millis();
-    if (millis() - sideInvalidStart >= SIDE_INVALID_MS) sideConfirmed = true;
-  } else {
-    sideInvalidStart = 0;
-  }
-  bool noRange = (!tofFok) && (!tofLok) && (!tofRok);
-  if (frontClose || sideConfirmed || noRange) {
-    if (frontClose)         Serial.println(F("  turn: FRONT close"));
-    else if (sideConfirmed) Serial.println(expectedCW ? F("  turn: RIGHT wall gone") : F("  turn: LEFT wall gone"));
-    else                    Serial.println(F("  turn: colour-only (no range sensors)"));
-    if (lockedColor == COLOR_NONE) {
-      lockedColor   = lastFirstColor;
-      clockwiseMode = (lockedColor == COLOR_ORANGE);
-      Serial.println(clockwiseMode
-        ? F("[FSM] LOCKED ORANGE -> CLOCKWISE (right turns)")
-        : F("[FSM] LOCKED BLUE -> COUNTERCLOCKWISE (left turns)"));
-    }
-    float segCm = absEnc(cornerFirstTicks) / TICKS_PER_CM;
-    if (cornerCount == 0) {
-      firstSegmentCm = segCm;
-      Serial.print(F("[DIST] A start->turn1 = ")); Serial.print(firstSegmentCm); Serial.println(F(" cm"));
-    } else if (cornerCount == 4) {
-      fullStartStraightCm = segCm; haveFullStraight = true;
-    } else if (cornerCount == 8 && haveFullStraight) {
-      fullStartStraightCm = 0.5 * (fullStartStraightCm + segCm);
-    }
-    if (haveFullStraight) {
-      finalDistanceCm = fullStartStraightCm - firstSegmentCm;
-      if (finalDistanceCm < 0) finalDistanceCm = 0;
-    }
-    goState(STATE_TURNING);
   }
 }
 // ============================================================
@@ -703,7 +821,8 @@ void turningStep() {
     turnStartTicks = readEncoder();
     turnCapTicks   = (long)(120.0 * TICKS_PER_CM);
   }
-  if (!turnGotSecond && detectColor(turnPartner) != COLOR_NONE) {
+  if (!turnGotSecond && turnPartner != COLOR_NONE &&
+      detectColor(turnPartner) != COLOR_NONE) {
     long tr = absEnc(readEncoder() - cornerFirstTicks);
     lastGapCm = (float)tr / TICKS_PER_CM;
     turnGotSecond = true; gapMeasured = true;
@@ -720,6 +839,7 @@ void turningStep() {
       Serial.print(gapRefCm); Serial.println(F(" cm"));
     }
     zeroEncoder();
+    beginStraight();          // new straight starts here (walls must be re-seen)
     goState(STATE_LANE_CORRECT);
   }
 }
@@ -806,6 +926,11 @@ void telemetry() {
   PiSerial.print(F(" F="));   PiSerial.print(tofFrontValid ? (int)tofFront : -1);
   PiSerial.print(F(" L="));   PiSerial.print(tofLeftValid  ? (int)tofLeft  : -1);
   PiSerial.print(F(" R="));   PiSerial.print(tofRightValid ? (int)tofRight : -1);
+  PiSerial.print(F(" op="));  PiSerial.print(leftOpen ? 'L' : '-');
+  PiSerial.print(rightOpen ? 'R' : '-');
+  PiSerial.print(F(" arm=")); PiSerial.print(dcColorArmed ? 'Y' : 'n');
+  PiSerial.print(F(" 1st=")); PiSerial.print(lastFirstColor == COLOR_ORANGE ? 'O'
+                                            : lastFirstColor == COLOR_BLUE ? 'B' : '-');
   PiSerial.print(F(" fl="));  PiSerial.print(fc == COLOR_ORANGE ? 'O' : fc == COLOR_BLUE ? 'B' : '-');
   PiSerial.print(F(" vis=")); PiSerial.print(visionFresh() ? vis.colour : 'x');
   PiSerial.print(F(" dx="));  PiSerial.print(vis.dx);
@@ -833,11 +958,14 @@ void setup() {
 }
 void loop() {
   serviceSensors();
+  serviceTurnPriority();     // <-- corner beats DRIVE, AVOID and LANE_CORRECT
   switch (currentState) {
     case STATE_INIT:
       Serial.println(F("[FSM] INIT"));
-      lockedColor   = COLOR_NONE;
-      cornerCount   = 0;
+      lockedColor    = COLOR_NONE;
+      lastFirstColor = COLOR_NONE;
+      cornerCount    = 0;
+      avoidPhase     = 0;
       laneHeading   = readHeading();
       targetHeading = laneHeading;
       zeroEncoder();
@@ -848,6 +976,7 @@ void loop() {
       laneHeading   = readHeading();     // re-zero reference at the gun
       targetHeading = laneHeading;
       zeroEncoder();
+      beginStraight();                   // first straight of the run
       goState(STATE_DRIVE_TO_CORNER);
       break;
     case STATE_DRIVE_TO_CORNER: driveStep();         break;
