@@ -9,48 +9,31 @@
 #include <VL53L1X.h>
 
 // ============================================================
-// NON-BLOCKING BUILD  (no settle stops, continuous motion)
+// OPEN ROUND CORE + PILLAR AVOIDANCE
 //
-// loop() runs once per iteration at max speed: it services ALL sensors
-// (IMU, front + side ToF; colour on demand) each pass, then advances a
-// cooperative state machine. No blocking while-loops, no delay() in the
-// run path. The car flows turn -> shuffle -> realign -> straight.
+// The open-round FSM is UNCHANGED. Everything it did, it still does:
+// drive -> colour gate -> turn -> lane correct -> straight -> final.
 //
-// TURN TRIGGER: colour line gates it, then the turn fires when EITHER
-// the front wall is close OR the respective-side wall goes invalid
-// (right ToF for clockwise, left for CCW - the inner wall that gives way
-// at a corner). The gate ensures we only look at a real corner.
+// Added on top, and nothing else:
 //
-// Distance bookkeeping: the encoder is zeroed only at START and at each
-// TURN COMPLETION, so it measures "distance since the last turn" through
-// the lane correction; A, L and the final straight share that reference.
+//   STATE_AVOID   Camera (Pi, "V,<colour>,<dx>,<area>") sees a pillar.
+//                 RED   -> steer RIGHT slowly until the pillar sits at an
+//                          offset in the frame (dx pushed to the far side)
+//                 GREEN -> steer LEFT  slowly, same idea
+//                 then realign onto laneHeading and drop straight back
+//                 into the open-round FSM where it left off.
 //
-// ------------------------------------------------------------
-// PILLAR LAYER (added - open-round logic is untouched)
+//   TURNING IS TOP PRIORITY. The corner conditions are evaluated in DRIVE
+//   *and* in AVOID. If they fire, the pillar maneuver is abandoned on the
+//   spot and the car turns. A pillar can never hold off a corner.
 //
-//   The Pi sends "V,<colour>,<dx>,<area>"   colour = R | G | N
-//
-//   RED   pillar seen -> steer RIGHT slowly until the pillar has been
-//                        pushed to |dx| >= AVOID_DX_TARGET on the LEFT
-//                        side of the frame
-//   GREEN pillar seen -> steer LEFT  slowly, mirror image
-//   then REALIGN onto laneHeading and hand straight back to
-//   STATE_DRIVE_TO_CORNER, which carries on exactly as before.
-//
-//   TURNING IS TOP PRIORITY. The pillar branch in driveStep only runs
-//   when the open-round turn conditions are NOT met, and STATE_AVOID
-//   checks those same conditions every loop - if they fire mid-swerve the
-//   maneuver is dropped and the car turns.
-//
-//   So that the corner is not lost while swerving, STATE_AVOID keeps the
-//   colour gate and the side-wall debounce alive (serviceCornerLine /
-//   serviceSideWatch), and returning to DRIVE does not re-run the entry
-//   block (resumeFromAvoid) - otherwise the latched corner line would be
-//   thrown away and the next turn could go the wrong way.
+//   The colour gate also keeps running during AVOID, so a corner line
+//   crossed while swerving is still latched - otherwise the swerve would
+//   eat the line that decides the turn direction.
 // ============================================================
 
 #define TCA_ADDR 0x70
-#define PiSerial Serial        // the Pi shares the debug UART
+#define PiSerial Serial          // Pi link IS USART1 on this board
 
 enum BlockColor { COLOR_NONE, COLOR_ORANGE, COLOR_BLUE };
 
@@ -59,7 +42,7 @@ enum RobotState {
   STATE_DRIVE_TO_CORNER,
   STATE_TURNING,
   STATE_LANE_CORRECT,
-  STATE_AVOID,                 // added
+  STATE_AVOID,                   // <-- added
   STATE_FINAL_STRAIGHT,
   STATE_FINISHED
 };
@@ -130,16 +113,56 @@ const int   CORRECTION_PWM         =   70;
 const float REALIGN_SAFETY_CM      = 80.0;
 
 // ============================================================
-// PILLAR TUNING  (added)
+// PILLAR AVOIDANCE TUNING            (the only new tuning block)
 // ============================================================
-const int32_t  AVOID_MIN_AREA     = 1600;  // pillar must be at least this big to engage
-const float    AVOID_STEER_DEG    = 18.0;  // how hard we lean off straight while swerving
-const int      AVOID_PWM          = 90;    // "slowly"
-const int      AVOID_DX_TARGET    = 110;   // pillar is clear once |dx| reaches this
-const int      DX_SIGN            = 1;     // set to -1 if the camera's dx is mirrored
-const uint16_t AVOID_SIDE_SAFE_MM = 120;   // never swerve closer than this to a wall
-const float    AVOID_MAX_CM       = 45.0;  // hard cap on how far one swerve may run
-const unsigned long VIS_FRESH_MS  = 250;
+const int32_t  AVOID_MIN_AREA    = 1600;  // pillar this big in frame -> engage
+const float    AVOID_STEER_DEG   = 20.0;  // how hard we lean off straight
+const int      AVOID_PWM         = 100;   // "slowly"
+const int      AVOID_OFFSET_DX   = 110;   // |dx| past this = pillar is at the offset
+const int      DX_SIGN           = +1;    // +1 if dx grows to the RIGHT in your frame
+                                          //    (flip to -1 if your Pi reports the other way)
+const uint16_t AVOID_SIDE_MIN_MM = 120;   // never crowd the pass-side wall closer than this
+const float    AVOID_MAX_OUT_CM  = 45.0;  // hard cap on how far we lean out
+const unsigned long AVOID_LOST_MS = 200;  // pillar gone from frame this long = done
+
+// ============================================================
+// VISION  (from the Pi over Serial:  "V,<colour>,<dx>,<area>")
+// ============================================================
+struct Vision { char colour; int dx; long area; unsigned long stamp; };
+Vision  vis = {'N', 0, 0, 0};
+char    visBuf[48];
+uint8_t visLen = 0;
+
+void parseVisionLine(char *s) {
+  if (s[0] != 'V' || s[1] != ',') return;
+  char c = s[2];
+  if (c != 'R' && c != 'G' && c != 'N') return;
+  char *p1 = strchr(s + 3, ',');  if (!p1) return;
+  char *p2 = strchr(p1 + 1, ','); if (!p2) return;
+  vis.colour = c;
+  vis.dx     = atoi(p1 + 1);
+  vis.area   = atol(p2 + 1);
+  vis.stamp  = millis();
+}
+
+void serviceVision() {
+  while (PiSerial.available()) {
+    char ch = PiSerial.read();
+    if (ch == '\n' || ch == '\r') {
+      if (visLen > 0) { visBuf[visLen] = 0; parseVisionLine(visBuf); visLen = 0; }
+    } else if (visLen < sizeof(visBuf) - 1) {
+      visBuf[visLen++] = ch;
+    }
+  }
+}
+
+bool visionFresh() { return (millis() - vis.stamp) < 250; }
+
+bool pillarSeen() {              // a real pillar, big enough to act on
+  if (!visionFresh()) return false;
+  if (vis.colour != 'R' && vis.colour != 'G') return false;
+  return vis.area >= AVOID_MIN_AREA;
+}
 
 // ============================================================
 // FSM DATA
@@ -169,45 +192,6 @@ float         gHeading  = 0.0;
 float         gYawRate  = 0.0;
 float         gPrevH    = 0.0;
 unsigned long gPrevHT   = 0;
-
-// ============================================================
-// VISION (added) - "V,<colour>,<dx>,<area>" from the Pi
-// ============================================================
-struct Vision { char colour; int dx; long area; unsigned long stamp; };
-Vision  vis = {'N', 0, 0, 0};
-char    visBuf[48];
-uint8_t visLen = 0;
-
-void parseVisionLine(char *s) {
-  if (s[0] != 'V' || s[1] != ',') return;
-  char c = s[2];
-  if (c != 'R' && c != 'G' && c != 'N') return;
-  char *p1 = strchr(s + 3, ',');  if (!p1) return;   // after colour
-  char *p2 = strchr(p1 + 1, ','); if (!p2) return;   // after dx
-  vis.colour = c;
-  vis.dx     = atoi(p1 + 1);
-  vis.area   = atol(p2 + 1);
-  vis.stamp  = millis();
-}
-
-void serviceVision() {
-  while (PiSerial.available()) {
-    char ch = PiSerial.read();
-    if (ch == '\n' || ch == '\r') {
-      if (visLen > 0) { visBuf[visLen] = 0; parseVisionLine(visBuf); visLen = 0; }
-    } else if (visLen < sizeof(visBuf) - 1) {
-      visBuf[visLen++] = ch;
-    }
-  }
-}
-
-bool visionFresh() { return (millis() - vis.stamp) < VIS_FRESH_MS; }
-
-bool pillarEngaged() {
-  if (!visionFresh()) return false;
-  if (vis.colour != 'R' && vis.colour != 'G') return false;
-  return vis.area >= AVOID_MIN_AREA;
-}
 
 // ============================================================
 // HELPERS
@@ -344,7 +328,7 @@ void serviceSensors() {
   serviceOneToF(tofF, tofFok, CH_FRONT, tofFront, tofFrontValid);
   serviceOneToF(tofL, tofLok, CH_LEFT,  tofLeft,  tofLeftValid);
   serviceOneToF(tofR, tofRok, CH_RIGHT, tofRight, tofRightValid);
-  serviceVision();                      // added
+  serviceVision();                                  // <-- added
 }
 
 // ============================================================
@@ -520,13 +504,13 @@ long       lcBaseTicks;
 long       lcTargetTicks;
 long       fsTargetTicks;
 
-// ---- pillar working vars (added) ----
-uint8_t  avoidPhase     = 0;    // 1 = swerve, 2 = realign
-bool     avoidRight     = true; // RED -> right, GREEN -> left
-char     avoidColour    = 'N';
-float    avoidServo     = SERVO_TRUE_STRAIGHT;
-long     avoidRefTicks  = 0;
-bool     resumeFromAvoid = false;
+// ---- pillar avoidance working vars (new) ----
+uint8_t       avoidPhase     = 0;    // 1 = lean out, 2 = realign
+char          avoidColour    = 'N';
+float         avoidServo     = SERVO_TRUE_STRAIGHT;
+long          avoidRefTicks  = 0;
+unsigned long avoidLostStart = 0;
+bool          avoidResume    = false;  // re-entering DRIVE mid-straight
 
 void finishLaneCorrect() {
   targetHeading = laneHeading;
@@ -535,60 +519,66 @@ void finishLaneCorrect() {
 }
 
 // ============================================================
-// SHARED CORNER LOGIC USED BY THE PILLAR LAYER (added)
-// Mirrors exactly what driveStep() already does, so STATE_AVOID does not
-// go blind to the corner while it is swerving.
+// COLOUR GATE  -  lifted verbatim out of driveStep so AVOID can run it too
 // ============================================================
-void serviceCornerLine() {
+void serviceColorGate() {
   if (!dcColorArmed) {
     BlockColor c = detectColor(dcWantFirst);
     if (c != COLOR_NONE) {
       dcColorArmed = true;
-      cornerFirstTicks = readEncoder();
+      cornerFirstTicks = readEncoder();          // absolute from segment origin
       if (dcFirstTurn) lastFirstColor = c;
-      sideInvalidStart = 0;
+      sideInvalidStart = 0;                       // start the side watch fresh
       resetColorDetector();
-      Serial.print(F("  colour gate armed (in avoid): "));
+      Serial.print(F("  colour gate armed: "));
       Serial.println(c == COLOR_ORANGE ? F("ORANGE") : F("BLUE"));
     }
     return;
   }
+
   if (!gapMeasured && detectColor(otherColor(lastFirstColor)) != COLOR_NONE) {
     long tr = absEnc(readEncoder() - cornerFirstTicks);
     lastGapCm = (float)tr / TICKS_PER_CM;
     gapMeasured = true;
-    Serial.print(F("  partner line (in avoid), gap="));
+    Serial.print(F("  partner line pre-turn, gap="));
     Serial.print(lastGapCm); Serial.println(F(" cm"));
   }
 }
 
-void serviceSideWatch() {
+// ============================================================
+// CORNER TRIGGER  -  the open-round conditions, unchanged, in one place
+// so both DRIVE and AVOID can ask "is it time to turn?"
+// ============================================================
+bool cornerTurnDue() {
+  if (!dcColorArmed) return false;              // same gate as the open round
+
+  // clockwise (orange) -> island on the RIGHT -> watch RIGHT ToF
+  // ccw       (blue)   -> island on the LEFT  -> watch LEFT  ToF
   bool expectedCW  = dcFirstTurn ? (lastFirstColor == COLOR_ORANGE) : clockwiseMode;
   bool sidePresent = expectedCW ? tofRok : tofLok;
   bool sideValid   = expectedCW ? tofRightValid : tofLeftValid;
-  if (sidePresent && !sideValid) {
+
+  bool sideConfirmed = false;
+  if (sidePresent && !sideValid) {              // watched wall reads invalid = gave way
     if (sideInvalidStart == 0) sideInvalidStart = millis();
+    if (millis() - sideInvalidStart >= SIDE_INVALID_MS) sideConfirmed = true;
   } else {
     sideInvalidStart = 0;
   }
-}
 
-// Read-only copy of the open-round turn condition.
-bool turnConditionsMet() {
-  if (!dcColorArmed) return false;
-  bool expectedCW  = dcFirstTurn ? (lastFirstColor == COLOR_ORANGE) : clockwiseMode;
-  bool sidePresent = expectedCW ? tofRok : tofLok;
-  bool sideValid   = expectedCW ? tofRightValid : tofLeftValid;
-  bool sideConfirmed = sidePresent && !sideValid && sideInvalidStart != 0 &&
-                       (millis() - sideInvalidStart >= SIDE_INVALID_MS);
   bool frontClose = tofFrontValid && (tofFront <= FRONT_TURN_MM);
   bool noRange    = (!tofFok) && (!tofLok) && (!tofRok);
-  return frontClose || sideConfirmed || noRange;
+
+  if (!(frontClose || sideConfirmed || noRange)) return false;
+
+  if (frontClose)         Serial.println(F("  turn: FRONT close"));
+  else if (sideConfirmed) Serial.println(expectedCW ? F("  turn: RIGHT wall gone") : F("  turn: LEFT wall gone"));
+  else                    Serial.println(F("  turn: colour-only (no range sensors)"));
+  return true;
 }
 
-// The lock + distance bookkeeping driveStep() does before STATE_TURNING,
-// replayed when the turn is triggered from inside STATE_AVOID.
-void commitCornerFromAvoid() {
+// the open-round lock + distance bookkeeping, unchanged
+void commitCorner() {
   if (lockedColor == COLOR_NONE) {
     lockedColor   = lastFirstColor;
     clockwiseMode = (lockedColor == COLOR_ORANGE);
@@ -596,6 +586,8 @@ void commitCornerFromAvoid() {
       ? F("[FSM] LOCKED ORANGE -> CLOCKWISE (right turns)")
       : F("[FSM] LOCKED BLUE -> COUNTERCLOCKWISE (left turns)"));
   }
+
+  // distance since segment origin (turn-complete / start) to the arm point
   float segCm = absEnc(cornerFirstTicks) / TICKS_PER_CM;
   if (cornerCount == 0) {
     firstSegmentCm = segCm;
@@ -608,21 +600,26 @@ void commitCornerFromAvoid() {
   if (haveFullStraight) {
     finalDistanceCm = fullStartStraightCm - firstSegmentCm;
     if (finalDistanceCm < 0) finalDistanceCm = 0;
+    Serial.print(F("[DIST] L=")); Serial.print(fullStartStraightCm);
+    Serial.print(F("  final(L-A)=")); Serial.print(finalDistanceCm); Serial.println(F(" cm"));
   }
+
+  goState(STATE_TURNING);          // motor keeps rolling into the turn
 }
 
 // ============================================================
-// STATE: DRIVE TO CORNER
-// (open-round logic unchanged - two marked additions only)
+// STATE: DRIVE TO CORNER      (open round, plus the pillar hand-off)
 // ============================================================
 void driveStep() {
   if (!entered) {
     entered = true;
-    if (resumeFromAvoid) {                 // ADDED: keep the corner context
-      resumeFromAvoid = false;
+    if (avoidResume) {
+      // coming back from a swerve mid-straight: keep the colour gate, the
+      // gap, the segment origin and the lockout exactly as they were
+      avoidResume = false;
+      Serial.println(F("[FSM] DRIVE_TO_CORNER (resumed)"));
       resetHeadingPid();
       setMotorSpeed(BASE_SPEED);
-      Serial.println(F("[FSM] DRIVE_TO_CORNER (resumed after pillar)"));
     } else {
       Serial.println(F("[FSM] DRIVE_TO_CORNER"));
       dcWantFirst = lockedColor;
@@ -650,166 +647,98 @@ void driveStep() {
 
   if (straightTicks <= dcLockoutTicks) return;
 
-  // ---- PILLAR (ADDED): only when the corner is not already calling ----
-  if (!turnConditionsMet() && pillarEngaged()) {
+  serviceColorGate();
+
+  // ---- TURNING IS TOP PRIORITY ----
+  if (cornerTurnDue()) { commitCorner(); return; }
+
+  // ---- otherwise, a pillar may be handled ----
+  if (pillarSeen()) {
     avoidColour = vis.colour;
-    avoidRight  = (avoidColour == 'R');            // RED -> right, GREEN -> left
-    avoidServo  = avoidRight ? (SERVO_TRUE_STRAIGHT + AVOID_STEER_DEG)
-                             : (SERVO_TRUE_STRAIGHT - AVOID_STEER_DEG);
-    avoidRefTicks = readEncoder();
-    avoidPhase    = 1;
-    setServoAngle(avoidServo);
-    setMotorSpeed(AVOID_PWM);
-    Serial.print(F("[PILLAR] "));
-    Serial.print(avoidRight ? F("RED -> easing RIGHT") : F("GREEN -> easing LEFT"));
-    Serial.print(F("  dx=")); Serial.print(vis.dx);
-    Serial.print(F(" area=")); Serial.println(vis.area);
+    // RED -> move RIGHT, GREEN -> move LEFT
+    avoidServo  = (avoidColour == 'R') ? (SERVO_TRUE_STRAIGHT + AVOID_STEER_DEG)
+                                       : (SERVO_TRUE_STRAIGHT - AVOID_STEER_DEG);
+    avoidRefTicks  = readEncoder();
+    avoidLostStart = 0;
+    avoidPhase     = 1;
+    Serial.print(F("[AVOID] "));
+    Serial.print(avoidColour == 'R' ? F("RED -> move RIGHT") : F("GREEN -> move LEFT"));
+    Serial.print(F("  dx=")); Serial.println(vis.dx);
     goState(STATE_AVOID);
     return;
-  }
-
-  if (!dcColorArmed) {
-    BlockColor c = detectColor(dcWantFirst);
-    if (c != COLOR_NONE) {
-      dcColorArmed = true;
-      cornerFirstTicks = readEncoder();          // absolute from segment origin
-      if (dcFirstTurn) lastFirstColor = c;
-      sideInvalidStart = 0;                       // start the side watch fresh
-      resetColorDetector();
-      Serial.print(F("  colour gate armed: "));
-      Serial.println(c == COLOR_ORANGE ? F("ORANGE") : F("BLUE"));
-    }
-    return;
-  }
-
-  if (!gapMeasured && detectColor(otherColor(lastFirstColor)) != COLOR_NONE) {
-    long tr = absEnc(readEncoder() - cornerFirstTicks);
-    lastGapCm = (float)tr / TICKS_PER_CM;
-    gapMeasured = true;
-    Serial.print(F("  partner line pre-turn, gap="));
-    Serial.print(lastGapCm); Serial.println(F(" cm"));
-  }
-
-  // ---- turn confirm: FRONT close OR the respective SIDE wall gone ----
-  // clockwise (orange) -> island on the RIGHT -> watch RIGHT ToF
-  // ccw       (blue)   -> island on the LEFT  -> watch LEFT  ToF
-  bool expectedCW  = dcFirstTurn ? (lastFirstColor == COLOR_ORANGE) : clockwiseMode;
-  bool sidePresent = expectedCW ? tofRok : tofLok;
-  bool sideValid   = expectedCW ? tofRightValid : tofLeftValid;
-
-  bool sideConfirmed = false;
-  if (sidePresent && !sideValid) {                // watched wall reads invalid = gave way
-    if (sideInvalidStart == 0) sideInvalidStart = millis();
-    if (millis() - sideInvalidStart >= SIDE_INVALID_MS) sideConfirmed = true;
-  } else {
-    sideInvalidStart = 0;
-  }
-
-  bool frontClose = tofFrontValid && (tofFront <= FRONT_TURN_MM);
-  bool noRange    = (!tofFok) && (!tofLok) && (!tofRok);
-
-  if (frontClose || sideConfirmed || noRange) {
-    if (frontClose)         Serial.println(F("  turn: FRONT close"));
-    else if (sideConfirmed) Serial.println(expectedCW ? F("  turn: RIGHT wall gone") : F("  turn: LEFT wall gone"));
-    else                    Serial.println(F("  turn: colour-only (no range sensors)"));
-
-    if (lockedColor == COLOR_NONE) {
-      lockedColor   = lastFirstColor;
-      clockwiseMode = (lockedColor == COLOR_ORANGE);
-      Serial.println(clockwiseMode
-        ? F("[FSM] LOCKED ORANGE -> CLOCKWISE (right turns)")
-        : F("[FSM] LOCKED BLUE -> COUNTERCLOCKWISE (left turns)"));
-    }
-
-    // distance since segment origin (turn-complete / start) to the arm point
-    float segCm = absEnc(cornerFirstTicks) / TICKS_PER_CM;
-    if (cornerCount == 0) {
-      firstSegmentCm = segCm;
-      Serial.print(F("[DIST] A start->turn1 = ")); Serial.print(firstSegmentCm); Serial.println(F(" cm"));
-    } else if (cornerCount == 4) {
-      fullStartStraightCm = segCm; haveFullStraight = true;
-    } else if (cornerCount == 8 && haveFullStraight) {
-      fullStartStraightCm = 0.5 * (fullStartStraightCm + segCm);
-    }
-    if (haveFullStraight) {
-      finalDistanceCm = fullStartStraightCm - firstSegmentCm;
-      if (finalDistanceCm < 0) finalDistanceCm = 0;
-      Serial.print(F("[DIST] L=")); Serial.print(fullStartStraightCm);
-      Serial.print(F("  final(L-A)=")); Serial.print(finalDistanceCm); Serial.println(F(" cm"));
-    }
-
-    goState(STATE_TURNING);          // motor keeps rolling into the turn
   }
 }
 
 // ============================================================
-// STATE: AVOID  (added)
-//   phase 1 - ease toward the pass side SLOWLY until the pillar has been
-//             pushed out to AVOID_DX_TARGET in the frame
-//   phase 2 - realign onto laneHeading, then hand back to DRIVE
-//   TURNING OUTRANKS BOTH PHASES.
+// STATE: AVOID   (lean out slowly until the pillar is at the offset,
+//                 then realign onto laneHeading and resume)
 // ============================================================
 void avoidStep() {
-  serviceCornerLine();     // do not go blind to the corner line while swerving
-  serviceSideWatch();      // keep the side-wall debounce running
+  if (!entered) {
+    entered = true;
+    setServoAngle(avoidServo);
+    setMotorSpeed(AVOID_PWM);
+  }
 
-  // ---- TURN HAS TOP PRIORITY ----
-  if (turnConditionsMet()) {
-    Serial.println(F("[PILLAR] dropped - corner has priority"));
-    commitCornerFromAvoid();
+  serviceColorGate();                       // a line crossed here still counts
+
+  // ---- TURNING IS TOP PRIORITY: drop the maneuver and take the corner ----
+  if (cornerTurnDue()) {
+    Serial.println(F("[AVOID] aborted - corner first"));
     avoidPhase = 0;
     resetHeadingPid();
-    goState(STATE_TURNING);
+    commitCorner();
     return;
   }
 
-  switch (avoidPhase) {
-    case 1: {                                  // ease across, slowly
-      setServoAngle(avoidServo);
-      setMotorSpeed(AVOID_PWM);
+  if (avoidPhase == 1) {                    // lean out, slowly
+    setServoAngle(avoidServo);
+    setMotorSpeed(AVOID_PWM);
 
-      bool atOffset;
-      if (visionFresh() && vis.colour == avoidColour) {
-        int dx = DX_SIGN * vis.dx;
-        // moving RIGHT pushes the pillar to the LEFT of the frame (dx negative)
-        atOffset = avoidRight ? (dx <= -AVOID_DX_TARGET) : (dx >= AVOID_DX_TARGET);
-      } else {
-        atOffset = true;                       // pillar left the frame - done
-      }
-
-      uint16_t sMm  = avoidRight ? tofRight      : tofLeft;
-      bool     sVal = avoidRight ? tofRightValid : tofLeftValid;
-      bool tooClose = sVal && (sMm <= AVOID_SIDE_SAFE_MM);
-      bool capped   = absEnc(readEncoder() - avoidRefTicks) >= (long)(AVOID_MAX_CM * TICKS_PER_CM);
-
-      if (atOffset || tooClose || capped) {
-        Serial.print(F("[PILLAR] offset reached ("));
-        Serial.print(atOffset ? F("dx") : tooClose ? F("wall") : F("cap"));
-        Serial.print(F("), out=")); Serial.print(absEnc(readEncoder() - avoidRefTicks) / TICKS_PER_CM);
-        Serial.println(F("cm -> realign"));
-        turnStartTicks = readEncoder();
-        turnCapTicks   = (long)(REALIGN_SAFETY_CM * TICKS_PER_CM);
-        avoidPhase = 2;
-      }
-      break;
+    // the pillar is "at the offset" once it has slid to the far side of the
+    // frame:  RED (we went right) -> dx to the LEFT,  GREEN -> dx to the RIGHT
+    bool atOffset = false;
+    if (visionFresh() && vis.colour == avoidColour) {
+      int dx = DX_SIGN * vis.dx;
+      atOffset = (avoidColour == 'R') ? (dx <= -AVOID_OFFSET_DX)
+                                      : (dx >=  AVOID_OFFSET_DX);
     }
 
-    case 2:                                    // realign onto the lane heading
-      if (turnArcStep(laneHeading)) {
-        avoidPhase = 0;
-        resetHeadingPid();
-        setMotorSpeed(BASE_SPEED);
-        resumeFromAvoid = true;                // corner context stays intact
-        Serial.println(F("[PILLAR] realigned - back to open-round FSM"));
-        goState(STATE_DRIVE_TO_CORNER);
-      }
-      break;
+    // pillar left the frame entirely
+    if (!pillarSeen() || vis.colour != avoidColour) {
+      if (avoidLostStart == 0) avoidLostStart = millis();
+    } else {
+      avoidLostStart = 0;
+    }
+    bool lost = (avoidLostStart != 0) && (millis() - avoidLostStart >= AVOID_LOST_MS);
 
-    default:                                   // shouldn't happen - bail out safely
-      avoidPhase = 0;
-      resumeFromAvoid = true;
-      goState(STATE_DRIVE_TO_CORNER);
-      break;
+    // safety: don't crowd the wall we are leaning towards, and cap the lean
+    uint16_t sideMm  = (avoidColour == 'R') ? tofRight      : tofLeft;
+    bool     sideVal = (avoidColour == 'R') ? tofRightValid : tofLeftValid;
+    bool wallClose = sideVal && (sideMm <= AVOID_SIDE_MIN_MM);
+    bool capped    = absEnc(readEncoder() - avoidRefTicks) >= (long)(AVOID_MAX_OUT_CM * TICKS_PER_CM);
+
+    if (atOffset || lost || wallClose || capped) {
+      if (atOffset)        Serial.println(F("[AVOID] pillar at offset -> realign"));
+      else if (lost)       Serial.println(F("[AVOID] pillar gone -> realign"));
+      else if (wallClose)  Serial.println(F("[AVOID] wall close -> realign"));
+      else                 Serial.println(F("[AVOID] lean capped -> realign"));
+      turnStartTicks = readEncoder();
+      turnCapTicks   = (long)(REALIGN_SAFETY_CM * TICKS_PER_CM);
+      avoidPhase = 2;
+    }
+    return;
+  }
+
+  // phase 2: eased realign back onto the lane heading, then straight back
+  // into the open-round FSM
+  if (turnArcStep(laneHeading)) {
+    avoidPhase = 0;
+    avoidResume = true;
+    resetHeadingPid();
+    setMotorSpeed(BASE_SPEED);
+    Serial.println(F("[AVOID] done -> back to open round"));
+    goState(STATE_DRIVE_TO_CORNER);
   }
 }
 
@@ -851,6 +780,7 @@ void turningStep() {
       Serial.print(gapRefCm); Serial.println(F(" cm"));
     }
     zeroEncoder();                     // segment origin = this turn corner
+    avoidResume = false;               // a new straight always starts clean
     Serial.print(F("  lane heading now ")); Serial.println(laneHeading);
     goState(STATE_LANE_CORRECT);
   }
@@ -938,7 +868,7 @@ void loop() {
       lockedColor   = COLOR_NONE;
       cornerCount   = 0;
       avoidPhase    = 0;
-      resumeFromAvoid = false;
+      avoidResume   = false;
       laneHeading   = readHeading();
       targetHeading = laneHeading;
       zeroEncoder();                 // segment origin = start position
@@ -948,7 +878,7 @@ void loop() {
     case STATE_DRIVE_TO_CORNER: driveStep();         break;
     case STATE_TURNING:         turningStep();       break;
     case STATE_LANE_CORRECT:    laneCorrectStep();   break;
-    case STATE_AVOID:           avoidStep();         break;   // added
+    case STATE_AVOID:           avoidStep();         break;
     case STATE_FINAL_STRAIGHT:  finalStraightStep(); break;
 
     case STATE_FINISHED:
