@@ -24,14 +24,6 @@
 //              GREEN -> pass on the LEFT   (steer left, watch LEFT  ToF)
 //              RED   -> pass on the RIGHT  (steer right, watch RIGHT ToF)
 //
-//   POST-PASS REFRACTORY: once a pass completes we IGNORE all pillars
-//          until we have driven AVOID_REFRACTORY_CM past the exit point
-//          AND received a camera frame stamped after that exit. Obstacles
-//          are guaranteed >= 100 cm apart, so this cannot mask a real one.
-//          Without it the pillar we just cleared - or a single stale frame
-//          up to 250 ms old - re-armed the maneuver and threw a phantom
-//          swerve immediately after the pass.
-//
 //   FRONT FAILSAFE: while avoiding, if the front ToF < 200 mm we are
 //          about to clip something -> reverse on the last steering angle,
 //          temporarily increase the swerve angle, then push forward again.
@@ -122,14 +114,6 @@ const uint16_t AVOID_SIDE_FAR_MM    = 300;    // target when pillar already off 
 const uint16_t SIDE_SAFE_MM         = 100;    // hard floor: never closer than this to a wall
 const uint16_t AVOID_OUT_CAP_CM     = 45;     // fallback swerve cap if wall not seen
 const unsigned long AVOID_RELEASE_MS = 150;   // colour must be gone this long to release
-// --- post-pass refractory (kills the phantom swerve after a completed pass) ---
-// Obstacles are guaranteed >= 100 cm apart. We ignore pillars for this far
-// after a pass ends, which still leaves ~45 cm of clear road to engage the
-// next one at full detection range.
-const float    AVOID_REFRACTORY_CM  = 55.0;
-long           avoidDoneTicks   = 0;       // encoder at the moment the last pass ended
-unsigned long  avoidDoneStamp   = 0;       // millis at the same moment
-bool           avoidRefractory  = false;   // true while the just-passed pillar is ignored
 // --- front failsafe (near-miss recovery) ---
 const uint16_t FRONT_STOP_MM        = 200;    // front closer than this = about to hit
 const float    AVOID_STEER_BOOST    = 8.0;    // extra swerve added each near-miss
@@ -201,22 +185,6 @@ void setServoAngle(float angleDeg) {
 void zeroEncoder() { TIM3->CNT = 0; }
 long readEncoder() { return (int16_t)TIM3->CNT; }
 long absEnc(long v) { return v < 0 ? -v : v; }
-// ---- pillar gate: engaged AND not shadowed by the pass we just finished ----
-// Two independent conditions must both clear, because either one alone can be
-// defeated: distance alone lets a 250 ms-old frame retrigger while we are still
-// inside the window, and the stamp alone lets the SAME pillar - still filling
-// the frame edge behind us - arm a brand new maneuver on the very next frame.
-bool pillarActionable() {
-  if (!pillarEngaged()) return false;
-  if (!avoidRefractory) return true;
-  if (absEnc(readEncoder() - avoidDoneTicks) <
-      (long)(AVOID_REFRACTORY_CM * TICKS_PER_CM)) return false;   // still too close behind
-  if ((long)(vis.stamp - avoidDoneStamp) <= 0) return false;      // frame predates the exit
-  avoidRefractory = false;
-  Serial.println(F("[AVOID] refractory cleared, pillars live again"));
-  return true;
-}
-void clearRefractory() { avoidRefractory = false; }
 // ---- IMU ----
 float readYaw() {
   float qI = myIMU.getQuatI(), qJ = myIMU.getQuatJ();
@@ -532,7 +500,6 @@ void startAvoid() {
   avoidRefTicks  = readEncoder();
   avoidFwdRef    = readEncoder();
   avoidGoneStart = 0;
-  clearRefractory();                          // we are committing to a NEW pillar
   avoidPhase = 1;
   setServoAngle(avoidOutServo);
   setMotorSpeed(AVOID_PWM);
@@ -603,14 +570,9 @@ void avoidStep() {
       if (turnArcStep(laneHeading)) {
         avoidSteerDeg = AVOID_STEER_DEG;        // restore base swerve after crossing
         avoidPhase = 0;
-        // ---- arm the post-pass refractory ----
-        avoidDoneTicks  = readEncoder();
-        avoidDoneStamp  = millis();
-        avoidRefractory = true;
         resetHeadingPid();
         setMotorSpeed(BASE_SPEED);
-        Serial.print(F("[AVOID] done, back to centre - ignoring pillars for "));
-        Serial.print(AVOID_REFRACTORY_CM); Serial.println(F("cm"));
+        Serial.println(F("[AVOID] done, back to centre"));
         goState(STATE_DRIVE_TO_CORNER);
       }
       break;
@@ -664,8 +626,7 @@ void driveStep() {
   bool sideValid   = expectedCW ? tofRightValid : tofLeftValid;
   bool frontClose  = tofFrontValid && (tofFront <= FRONT_TURN_MM);
   // ---- OFFSET-BASED PILLAR AVOIDANCE (don't pre-empt a real corner) ----
-  // pillarActionable() also swallows the pillar we have just finished passing.
-  if (pillarActionable() && !(frontClose && dcColorArmed)) {
+  if (pillarEngaged() && !(frontClose && dcColorArmed)) {
     startAvoid();
     goState(STATE_AVOID);
     return;
@@ -734,10 +695,6 @@ void turningStep() {
     cornerCount++;
     Serial.print(F("[FSM] TURNING - corner "));
     Serial.print(cornerCount); Serial.print(F(" / ")); Serial.println(TARGET_CORNERS);
-    // A corner means the pillar we passed is well behind us, and the encoder is
-    // about to be zeroed at the end of this turn - which would leave the
-    // refractory reference pointing at a meaningless tick count. Drop it here.
-    clearRefractory();
     turnAmount    = clockwiseMode ? 90.0 : -90.0;
     turnTarget    = wrapDeg(laneHeading - turnAmount);
     turnPartner   = otherColor(lastFirstColor);
@@ -843,9 +800,6 @@ void telemetry() {
   BlockColor fc = rawFloorColor();
   PiSerial.print(F("# st=")); PiSerial.print(stateName(currentState));
   PiSerial.print(F(" av="));  PiSerial.print(avoidPhase);
-  PiSerial.print(F(" rf="));  PiSerial.print(avoidRefractory ? 1 : 0);
-  PiSerial.print(F(" rd="));  PiSerial.print(avoidRefractory
-                    ? (int)(absEnc(readEncoder() - avoidDoneTicks) / TICKS_PER_CM) : -1);
   PiSerial.print(F(" cw="));  PiSerial.print(clockwiseMode ? 'R' : 'L');
   PiSerial.print(F(" sv="));  PiSerial.print((int)lastServoDeg);
   PiSerial.print(F(" hd="));  PiSerial.print(gHeading, 1);
@@ -886,7 +840,6 @@ void loop() {
       cornerCount   = 0;
       laneHeading   = readHeading();
       targetHeading = laneHeading;
-      clearRefractory();
       zeroEncoder();
       goState(STATE_WAIT_START);
       break;
@@ -894,7 +847,6 @@ void loop() {
       waitForStart();
       laneHeading   = readHeading();     // re-zero reference at the gun
       targetHeading = laneHeading;
-      clearRefractory();
       zeroEncoder();
       goState(STATE_DRIVE_TO_CORNER);
       break;
