@@ -39,6 +39,7 @@ enum BlockColor { COLOR_NONE, COLOR_ORANGE, COLOR_BLUE };
 
 enum RobotState {
   STATE_INIT,
+  STATE_WAIT_START,              // <-- added
   STATE_DRIVE_TO_CORNER,
   STATE_TURNING,
   STATE_LANE_CORRECT,
@@ -54,6 +55,8 @@ const int RPWM_PIN   = PB9;
 const int LPWM_PIN   = PB8;
 const int DRV_EN_PIN = PB1;
 const int SERVO_PIN  = PA8;
+
+const int START_BTN_PIN = PA5;        // active-low: PA5 <-> GND, press = LOW
 
 const int IMU_CS_PIN  = PB0;
 const int IMU_INT_PIN = PB13;
@@ -351,6 +354,7 @@ void initHardware() {
   pinMode(RPWM_PIN, OUTPUT);
   pinMode(LPWM_PIN, OUTPUT);
   pinMode(DRV_EN_PIN, OUTPUT);
+  pinMode(START_BTN_PIN, INPUT_PULLUP);
   digitalWrite(DRV_EN_PIN, HIGH);
   setMotorSpeed(0);
 
@@ -851,6 +855,17 @@ void finalStraightStep() {
 }
 
 // ============================================================
+// START BUTTON  (PA5 active-low, blocking wait - car not moving yet)
+// ============================================================
+void waitForStart() {
+  Serial.println(F("[FSM] waiting for START button (PA5 -> GND)"));
+  while (digitalRead(START_BTN_PIN) == HIGH) { delay(5); }   // wait for press (LOW)
+  delay(30);                                                 // debounce
+  while (digitalRead(START_BTN_PIN) == LOW)  { delay(5); }   // wait for release
+  Serial.println(F("[FSM] START"));
+}
+
+// ============================================================
 // MAIN
 // ============================================================
 void setup() {
@@ -872,6 +887,16 @@ void loop() {
       laneHeading   = readHeading();
       targetHeading = laneHeading;
       zeroEncoder();                 // segment origin = start position
+      setMotorSpeed(0);
+      setServoAngle(SERVO_TRUE_STRAIGHT);
+      goState(STATE_WAIT_START);
+      break;
+
+    case STATE_WAIT_START:
+      waitForStart();
+      laneHeading   = readHeading();   // re-zero the reference at the gun
+      targetHeading = laneHeading;
+      zeroEncoder();                   // segment origin = start position
       goState(STATE_DRIVE_TO_CORNER);
       break;
 
