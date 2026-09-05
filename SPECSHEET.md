@@ -181,7 +181,7 @@ straight; this matters more now that steering is open-loop (Decision #16).
 ## 6. Compute split
 
 - **Open round:** STM32 only (ToF/IR/sonar + IMU + encoder). Fully deterministic, NO Pi in the loop.
-- **Obstacle round:** adds **Raspberry Pi 4B (1 GB)** + **fisheye-lens camera** for pillar colour ONLY.
+- **Obstacle round:** adds **Raspberry Pi 5 (8 GB)** + **Slamtec RPLIDAR C1 (360° DTOF)** + **160° FOV fisheye camera** for 2D obstacle mapping, pillar classification, and clearance geometry.
 - Inter-board link = **checksummed UART**. NEVER inter-board I2C.
 - STM32 chosen over ESP32: clean 12-bit ADC (Sharp IR is analog), hardware quadrature encoder timers, deterministic timing (no WiFi stack stealing cycles).
 
@@ -212,10 +212,10 @@ modelled swept envelope, which is why it ranked parallel bell-crank as dominated
 
 ## 8. Sensors - AS BUILT
 
-> **REVISED 2026-07-28 (Decisions #23, #24).** XSHUT address reassignment is replaced by a
+> **REVISED 2026-07-28 & 2026-09-05 (Decisions #23, #24, #29).** XSHUT address reassignment is replaced by a
 > **PCA9548A multiplexer** — one sensor per channel, every device at its factory 0x29, five
 > XSHUT GPIO reclaimed and the volatile-address-on-brownout problem deleted rather than
-> managed. The MPU9250 is **not on hand**; the part we have is an MPU6050, which is I2C-only.
+> managed. Obstacle challenge upgraded with **Raspberry Pi 5 (8GB)**, **Slamtec RPLIDAR C1**, and **160° FOV camera**.
 
 | Sensor | Part | Bus | Role |
 |---|---|---|---|
@@ -224,7 +224,9 @@ modelled swept envelope, which is why it ranked parallel bell-crank as dominated
 | Heading — **race** | **BNO08x / ICM-42688** | **SPI1, mainboard, no mux** | gyro-Z only 🚩 **not yet ordered** |
 | Heading — bench only | **MPU6050** (`WHO_AM_I` 0x68) | PCA9548A ch7 | bring-up only, **will not race** |
 | Odometry | 25GA encoder | TIM3 quadrature | distance + closed-loop speed |
-| Pillar colour | Fisheye 160 deg + Pi 4B | UART | obstacle round only |
+| Obstacle 2D LIDAR | **Slamtec RPLIDAR C1** | USB to Pi 5 | 360° DTOF, 12 m range, obstacle avoidance (obstacle round) |
+| Pillar colour & offset | **Fisheye 160° FoV camera** | CSI / USB to Pi 5 | Red/green pillar classification (obstacle round) |
+| High-level compute | **Raspberry Pi 5 (8 GB)** | Checksummed UART to STM32 | High-level perception & advisory steering guidance |
 
 **Why the racing IMU stays off the mux:** Decision #1 terminates all 12 corners and every
 park arc on measured heading, so the gyro is the most latency-critical signal in the
@@ -281,7 +283,7 @@ is marginal, the Sharp GP2Y0A21 fallback must be ordered immediately - and its l
 is still unrecorded in `BOM.md` (Open Question #3).
 
 ### Unchanged
-- **LIDAR deferred** - design the upper deck to accept it later.
+- **LIDAR integrated (Obstacle Challenge):** Slamtec RPLIDAR C1 (360° DTOF, ~110 g) mounted on upper deck (Decision #29).
 - **Sensors + camera mount to the FIXED chassis**, never the steering linkage.
 
 ## 9. Reliability spec ("no randomness")

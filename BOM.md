@@ -19,8 +19,9 @@ inventory check + Daraz/RoboticsBD lookup. TBD = not yet confirmed.
 | Distance ×5 | **VL53L0X** | **On hand ×5** | ⚠️ **no programmable ROI** — Decision #7 correction |
 | Floor colour | **TCS34725** | **On hand** | I²C 0x29 — collides with VL53L0X, hence bus split |
 | IMU — **bench only** | **MPU6050**, I²C, `WHO_AM_I` = **0x68 confirmed** | **On hand** | ⚠️ **Will not race** (Decision #24). I²C-only part — no SPI variant exists. Sits on mux ch7. |
-| SBC (obstacle round only) | **Raspberry Pi 4B, 1 GB** | **On hand** | ~20 mm tall with connectors — drives the height growth |
-| Camera | **Fisheye 160° FoV** | **On hand** | pillar colour only |
+| SBC (obstacle round only) | **Raspberry Pi 5, 8 GB** | **On hand** | Quad-core A76 @ 2.4 GHz; runs concurrent vision + LIDAR SLAM |
+| LIDAR (obstacle round only) | **Slamtec RPLIDAR C1** | **On hand** | 360° DTOF, 12 m range, ~110 g; USB to Pi 5 (Decision #29) |
+| Camera | **Fisheye 160° FoV** | **On hand** | Pillar colour detection + horizontal offset |
 | Battery | **3S LiPo, 75C** | **On hand** | ⚠️ capacity/mAh still TBD |
 | Buck (logic) | 5 V module | **On hand** | Feeds Board A logic + Board B |
 | Wheels | Front **46 mm**, rear **50 mm**, printed | **Made** | 4 mm mismatch → 1.0–1.1° rake, corrected by ToF wedge |
@@ -36,7 +37,7 @@ inventory check + Daraz/RoboticsBD lookup. TBD = not yet confirmed.
 | Start button | Momentary NO + 10 kΩ / 1 kΩ / 100 nF debounce | Rule 9.11 — separate from the power switch |
 | BEC-S | **6.0 V, 3 A cont / 5 A peak** | MG996R stall is ~2.5 A; must not sag the logic rail |
 | BEC-L | **5.0 V, 2 A** | STM32 + 5× ToF + TCS + IMU ≈ 150 mA typ |
-| BEC-C | **5.1 V, 3 A**, adjustable | Pi 4B; set to 5.15 V at header under load, never >5.25 V |
+| BEC-C | **5.0 V / 5.1 V, 5 A**, adjustable | Pi 5 + RPLIDAR C1; prevents low-voltage USB throttling (Decision #29) |
 | Battery connector | XT30 | |
 | Bulk caps | 1000 µF 25 V low-ESR (BTS7960 input), 470 µF (servo connector) | Brown-out prevention |
 | Ceramics | 0.1 µF ×~15 — motor terminals ×1, terminal-to-can ×2, every IC VCC | EMI + decoupling |
@@ -66,10 +67,10 @@ inventory check + Daraz/RoboticsBD lookup. TBD = not yet confirmed.
 | **Inline fuse** | **Team decision #26 — accepted risk, not an oversight** |
 | **JST-PH** | 2.0 mm pitch gives a 0.25 mm annulus at our fab, on a board with no plated holes — Decision #27 |
 | XSHUT wiring ×5 | Unnecessary once each ToF has its own mux channel — Decision #23 |
-| LIDAR | Deferred — reserve upper-deck space, do not buy for v1 |
+| ~~LIDAR~~ | ~~Deferred~~ — **REVERSED by Decision #29.** Slamtec RPLIDAR C1 added for obstacle round. |
 
 ## Mass check
-Electrical ≈ 3S LiPo 75 g + BTS7960 66 g + 3 BECs 30 g + harness 40 g + MG996R 55 g
-+ Pi 4B 46 g = **~312 g** before chassis/wheels/motor. Against the 1.5 kg limit this is
-comfortable; against the original ~450 g target it is not — **re-estimate total mass
-once the Fusion model has real materials assigned.**
+Electrical ≈ 3S LiPo 75 g + BTS7960 66 g + 3 BECs 35 g + harness 45 g + MG996R 55 g
++ Pi 5 (with active cooler) ~60 g + RPLIDAR C1 ~110 g = **~446 g** before chassis/wheels/motor.
+Total vehicle mass is estimated at **~540–580 g**, comfortably below the 1.5 kg WRO ceiling.
+

@@ -1,9 +1,11 @@
-# vision - Raspberry Pi pillar detection
+# vision - Raspberry Pi 5 Perception & Pillar Detection
 
-`main.py` - the OpenCV node that runs on the Raspberry Pi 4B during the obstacle round. It
-finds the largest red or green pillar in view and reports its colour, horizontal offset, and
-size to the STM32 over UART. It also reads the STM32 telemetry back and shows everything on a
-small web page.
+`main.py` - the perception node running on the **Raspberry Pi 5 (8GB)** during the obstacle round. It
+processes video streams from the **160° FOV fisheye camera**, identifies red and green obstacle pillars,
+computes their color, horizontal angular offset, and bounding box area, and transmits advisory navigation
+frames to the STM32 over high-speed UART. In conjunction with the **Slamtec RPLIDAR C1**, it establishes
+a robust obstacle mapping and avoidance pipeline. Telemetry is parsed in real time and can be monitored via
+a lightweight local diagnostics stream.
 
 ## Run it
 

@@ -5,7 +5,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![WRO Category](https://img.shields.io/badge/WRO-Future%20Engineers%202026-brightgreen.svg)](#rule-compliance)
 [![MCU](https://img.shields.io/badge/Master%20MCU-STM32F411CEU6-blue)](SPECSHEET.md)
-[![Vision](https://img.shields.io/badge/Vision%20SBC-Raspberry%20Pi%204B-red)](src/vision/)
+[![Compute SBC](https://img.shields.io/badge/Compute%20SBC-Raspberry%20Pi%205%20(8GB)-red)](src/vision/)
+[![LiDAR](https://img.shields.io/badge/LiDAR-Slamtec%20RPLIDAR%20C1%20(360°%20DTOF)-purple)](SPECSHEET.md)
 [![Design](https://img.shields.io/badge/Design%20Philosophy-Evidence--Driven-orange)](DECISIONS.md)
 
 **An autonomous self-driving vehicle engineered from first principles by students from Bangladesh for the World Robot Olympiad (WRO) Future Engineers 2026 competition.**
@@ -35,8 +36,8 @@ This repository serves as the complete, transparent engineering logbook of the v
 | Category | Parameter | Measured / Engineered Value | Rule Limit / Target | Notes |
 |---|---|---|---|---|
 | **Envelope** | Scored Footprint | **165 × 115 mm** | ≤ 300 × 200 mm | Ultra-compact design to maximize parking slack |
-| | Height | **50 mm** (Open) / **~85 mm** (Obstacle) | ≤ 300 mm | Minimal CG height; camera mast modular |
-| | Total Mass | **~420 g** (Open) / **~510 g** (Obstacle) | Unrestricted | Low-inertia vehicle for rapid deceleration |
+| | Height | **50 mm** (Open) / **~90 mm** (Obstacle with LiDAR) | ≤ 300 mm | Minimal CG height; sensor mast modular |
+| | Total Mass | **~420 g** (Open) / **~540–580 g** (Obstacle) | Unrestricted | Low-inertia vehicle for rapid deceleration |
 | **Chassis** | Wheelbase ($L$) | **110 mm** | Measured | Optimized against turning radius |
 | | Track Width ($W$) | **105 mm** (center-to-center) / **115 mm** (extreme) | — | 115 mm total outer width |
 | | Wheel Diameter | **46 mm** (Front) / **50 mm** (Rear) | — | 1.1° natural forward rake |
@@ -47,12 +48,14 @@ This repository serves as the complete, transparent engineering logbook of the v
 | | Reduction | **5:1 Spur Gear Final Drive** | — | High starting torque, eliminates stall cogging |
 | | Drive Topology | **Solid rear axle** (No differential) | Max 1 driven axle | Maximizes straight-line odometry consistency |
 | | Maximum Speed | **0.70 m/s** | — | Software throttled for predictable braking |
-| **Sensors** | Odometry Resolution | **0.175 mm / count** | — | Quadrature optical/magnetic motor encoder |
-| | Inertial Measurement | **MPU6050 / SPI 6-DoF IMU** | — | 1 kHz internal sampling for heading integration |
+| **Sensors** | 2D LiDAR Scanner | **Slamtec RPLIDAR C1 (360° DTOF)** | — | 12 m range, 5 kHz sampling, high ambient light immunity (Obstacle round) |
+| | Optical Camera | **160° FOV Wide-Angle Fisheye** | — | High-speed pillar color & centroid extraction (Obstacle round) |
 | | Distance Array | **4× VL53L0X Time-of-Flight (ToF)** | — | Equipped with custom 3D-printed optical collimators |
 | | Ground Color Sensing | **TCS34725 RGB Sensor** | — | Downward-facing with isolated illumination hood |
-| **Compute** | Low-Level Master | **STM32F411CEU6 (Black Pill)** | — | ARM Cortex-M4 @ 100 MHz, Hardware FPU, Real-Time Loop |
-| | High-Level Vision | **Raspberry Pi 4B (2GB/4GB)** | — | Fisheye camera, OpenCV pillar classification (Obstacle only) |
+| | Inertial Measurement | **MPU6050 / SPI 6-DoF IMU** | — | 1 kHz internal sampling for heading integration |
+| | Odometry Resolution | **0.175 mm / count** | — | Quadrature optical/magnetic motor encoder |
+| **Compute** | Real-Time Master | **STM32F411CEU6 (Black Pill)** | — | ARM Cortex-M4 @ 100 MHz, Hardware FPU, Real-Time Loop |
+| | Perception & Mapping | **Raspberry Pi 5 (8GB)** | — | Quad-Core Cortex-A76 @ 2.4 GHz, concurrent Vision + LiDAR SLAM |
 
 ### Rule Compliance Matrix
 
@@ -69,9 +72,9 @@ The robot employs a **dual-tier heterogeneous compute hierarchy**:
 ```mermaid
 graph TD
     subgraph Power ["Power Subsystem (Single Star Ground)"]
-        BAT["2S LiPo / Li-Ion Battery"] --> REG6["6.0V 3A Buck (Servo Only)"]
+        BAT["2S / 3S LiPo Battery"] --> REG6["6.0V 3A Buck (Servo Only)"]
         BAT --> REG5["5.0V 2A Buck (STM32 & Sensors)"]
-        BAT --> REG51["5.1V 3A Buck (Pi 4B Harness)"]
+        BAT --> REG55["5.0V / 5.1V 5A Buck (Pi 5 + LiDAR Harness)"]
         BAT --> DRV_PWR["Direct Battery Rail (BTS7960)"]
     end
 
@@ -90,9 +93,10 @@ graph TD
         STM -->|PWM + EN| BTS["BTS7960 H-Bridge Driver"] --> MOTOR["25GA Drive Motor"]
     end
 
-    subgraph HighLevel ["Vision Tier (Obstacle Round Only)"]
-        PI["Raspberry Pi 4B"]
-        CAM["160° Fisheye Camera"] -->|CSI / V4L2| PI
+    subgraph HighLevel ["Perception & Mapping Tier (Obstacle Round Only)"]
+        PI["Raspberry Pi 5 (8GB)"]
+        LIDAR["Slamtec RPLIDAR C1 (360° DTOF)"] -->|USB High-Speed| PI
+        CAM["160° FOV Fisheye Camera"] -->|CSI / V4L2| PI
         PI -->|Checksummed Packet UART @ 115200| STM
     end
 
@@ -126,9 +130,10 @@ In the Open Challenge, the vehicle runs **exclusively on the STM32F411**, operat
    - A temporal lockout mask prevents false line-trigger re-entry until the vehicle clears the intersection.
 7. **Lap Counting & Finish**: After completing 12 consecutive 90° turns (3 full laps), the vehicle centers itself into the start sector and engages dynamic motor braking.
 
-### 2. Obstacle Challenge (Vision-Assisted Navigation)
-- **High-Level Computer Vision**: The Raspberry Pi runs a lightweight, multithreaded Python/C++ pipeline utilizing HSV thresholding, contour extraction, and bounding-box aspect ratio filtering to classify Red (pass right) and Green (pass left) pillars.
-- **Safety Isolation Guarantee**: Vision coordinates are transmitted via fixed-size checksummed UART packets. The STM32 treats vision as an advisory input. If packets drop, freeze, or corrupt, the STM32 defaults instantly to its deterministic wall-following safety protocol. **The Raspberry Pi can never stall or crash the vehicle.**
+### 2. Obstacle Challenge (Vision & LiDAR Sensor Fusion)
+- **High-Speed Computer Vision**: The **160° FOV fisheye camera** captures wide forward perspectives. A multithreaded OpenCV pipeline classifies Red (steer right) and Green (steer left) pillars via calibrated Lab/HSV thresholding and contour aspect ratio validation.
+- **360° DTOF LiDAR Mapping**: The **Slamtec RPLIDAR C1** performs high-frequency (5 kHz) 360° laser range scanning, mapping obstacle radial positions and corridor wall boundaries up to 12 meters with millimeter accuracy.
+- **Safety Isolation Guarantee**: Fused navigation vectors are packaged into fixed-size checksummed UART frames. The STM32 evaluates these inputs as advisory guidance. If the Raspberry Pi 5 or LiDAR pipeline experiences frame drops or latency spikes, the STM32 instantly reverts to deterministic wall-following. **The high-level stack can never stall or crash the vehicle.**
 
 ---
 
@@ -167,7 +172,7 @@ To ensure resilience during high-vibration dynamic runs, the electronics follow 
   1. *Motor Rail*: Unregulated battery voltage routed via heavy-gauge copper directly to BTS7960 H-Bridge.
   2. *Servo Rail (6.0V)*: Dedicated 3A buck regulator. Prevents the 2.5A instantaneous stall spikes of the MG996R from causing MCU brownout resets.
   3. *Logic Rail (5.0V → 3.3V)*: Dedicated buck feeding STM32 and secondary low-dropout (LDO) regulator for sensors.
-  4. *SBC Rail (5.1V)*: Dedicated high-current regulator harness for the Raspberry Pi 4B (physically disconnected during Open round).
+  4. *SBC & LiDAR Rail (5.0V/5.1V, 5A)*: Dedicated high-current regulator harness for the Raspberry Pi 5 (8GB) and RPLIDAR C1 (physically disconnected during Open round).
 - **Wiring & Interconnect Standards**:
   - **Zero jumper wires (DuPont) and zero breadboards** anywhere on the vehicle.
   - All wiring harness connections are crimped and latched using genuine JST-XH connectors with heat-shrink strain reliefs.
