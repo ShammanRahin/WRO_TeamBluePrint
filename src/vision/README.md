@@ -1,4 +1,4 @@
-﻿# vision - Raspberry Pi pillar detection
+# vision - Raspberry Pi pillar detection
 
 `main.py` - the OpenCV node that runs on the Raspberry Pi 4B during the obstacle round. It
 finds the largest red or green pillar in view and reports its colour, horizontal offset, and
@@ -38,4 +38,4 @@ python3 main.py --calibrate-camera
 - WiFi and Bluetooth are disabled on the Pi for competition.
 - The link is the same UART the STM32 uses for telemetry - one wire pair, full-duplex.
 
-Vision pipeline authored by Solaiman Kalam (IUT, CSE).
+Vision pipeline authored by Team Blueprint.

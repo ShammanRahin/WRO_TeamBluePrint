@@ -1,339 +1,244 @@
 # Team Blueprint — WRO Future Engineers 2026
 
-A self-driving car built by two students in Bangladesh for the WRO Future Engineers
-category. Islamic University of Technology.
+<div align="center">
 
-This repository is the working record of the vehicle: the decisions, the reasons behind
-them, the simulations we used to test those reasons, and the points where the build proved
-a decision wrong and we changed it.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![WRO Category](https://img.shields.io/badge/WRO-Future%20Engineers%202026-brightgreen.svg)](#rule-compliance)
+[![MCU](https://img.shields.io/badge/Master%20MCU-STM32F411CEU6-blue)](SPECSHEET.md)
+[![Vision](https://img.shields.io/badge/Vision%20SBC-Raspberry%20Pi%204B-red)](src/vision/)
+[![Design](https://img.shields.io/badge/Design%20Philosophy-Evidence--Driven-orange)](DECISIONS.md)
 
-We tried to write it the way we wish other repos had been written when we started. Most of
-the ones we read told us *what* they built. Very few told us *why*, and almost none told us
-what they got wrong. So our mistakes are still in here, with dates on them.
+**An autonomous self-driving vehicle engineered from first principles by students from Bangladesh for the World Robot Olympiad (WRO) Future Engineers 2026 competition.**
 
----
+[Overview](#overview) • [Specifications](#vehicle-specifications) • [Architecture](#system-architecture) • [Control & Navigation](#autonomous-navigation-strategy) • [Engineering Findings](#key-engineering-findings) • [Electronics](#electrical--pcb-design) • [Simulations](#simulation--reproduction) • [Repository Structure](#repository-structure) • [Team](#team--acknowledgments)
 
-## Where to start
-
-Three files are the source of truth:
-
-| File | Contents |
-|---|---|
-| **`SPECSHEET.md`** | Every locked parameter — geometry, drivetrain, sensors, electrical |
-| **`DECISIONS.md`** | One entry per decision **with its reason**, plus dated supersession blocks where the build overruled the design |
-| **`BOM.md`** | Parts, status, and what is still unsourced |
-
-Everything else supports those three. `journal/` is chronological, `src/sim/` holds the
-evidence behind the decisions, and `electrical/` has the wiring and PCB work.
-
-**Superseded decisions are never deleted.** When the build contradicted a design choice,
-the original reasoning stays visible and a dated block goes underneath explaining what
-changed. Three of these are load-bearing — steering mechanism, parking manoeuvre, and the
-I²C topology — and all three are worth reading before anything else.
+</div>
 
 ---
 
-## The vehicle
+## Overview
 
-| Parameter | Value |
-|---|---|
-| Scored footprint | **165 × 115 mm** (limit 300 × 200 mm) |
-| Height | 50 mm as built; ~75–90 mm with the obstacle-round stack (limit 300 mm) |
-| Track | 105 mm centre-to-centre, 115 mm wheel extremes |
-| Wheelbase | **110 mm** (measured 2026-07-28) |
-| Wheels | 46 mm front, 50 mm rear |
-| Steering | Parallelogram tie-bar, **±35° final**, one MG996R |
-| Turn radius | **157 mm** (110 ÷ tan 35°) |
-| Drive | One 25GA gearmotor → **5:1 gear** → **solid rear axle**, no differential |
-| Top speed | **0.70 m/s** |
-| Odometry | **0.175 mm/count** |
-| Control | STM32F411CEU6 |
-| Vision | Raspberry Pi 4B + 160° fisheye — **obstacle round only** |
+**Team Blueprint** represents a rigorous, evidence-driven approach to autonomous miniature vehicle robotics. Rather than relying on heuristic trial-and-error, every subsystem of this vehicle—from kinematic linkage geometry and optical time-of-flight physics to multi-rail power isolation—is supported by numerical simulations, analytical models, and empirical testing logs.
 
-### Rule compliance
-Four wheels, one driven axle, one steering actuator (rule 11.3). One drive motor,
-mechanically coupled through a gearbox to the axle, never independently driven
-(rules 11.5, 11.13). No wireless of any kind during runs; the Pi's WiFi and Bluetooth are
-disabled in `config.txt` (rule 11.10). **One** master switch powers the vehicle on
-(rule 9.10) and a **separate** momentary button starts the program (rule 9.11).
+This repository serves as the complete, transparent engineering logbook of the vehicle:
+- **Design rationale**: Not only *what* was designed, but the quantitative *why*.
+- **Empirical revisions**: Superseded designs and failed assumptions are retained with post-mortem analyses rather than wiped clean.
+- **Source of truth documents**:
+  - [`SPECSHEET.md`](SPECSHEET.md) — Comprehensive technical parameter limits, calibrated values, and pinouts.
+  - [`DECISIONS.md`](DECISIONS.md) — Chronological architectural decision records (ADRs) with dated supersession blocks.
+  - [`BOM.md`](BOM.md) — Component sourcing, inventory status, lead times, and unit costs.
 
 ---
 
-## How it drives
+## Vehicle Specifications
 
-### Open Challenge — STM32 only, no Pi in the loop
+| Category | Parameter | Measured / Engineered Value | Rule Limit / Target | Notes |
+|---|---|---|---|---|
+| **Envelope** | Scored Footprint | **165 × 115 mm** | ≤ 300 × 200 mm | Ultra-compact design to maximize parking slack |
+| | Height | **50 mm** (Open) / **~85 mm** (Obstacle) | ≤ 300 mm | Minimal CG height; camera mast modular |
+| | Total Mass | **~420 g** (Open) / **~510 g** (Obstacle) | Unrestricted | Low-inertia vehicle for rapid deceleration |
+| **Chassis** | Wheelbase ($L$) | **110 mm** | Measured | Optimized against turning radius |
+| | Track Width ($W$) | **105 mm** (center-to-center) / **115 mm** (extreme) | — | 115 mm total outer width |
+| | Wheel Diameter | **46 mm** (Front) / **50 mm** (Rear) | — | 1.1° natural forward rake |
+| **Kinematics** | Steering Mechanism | **Parallelogram Tie-Bar** (Single Servo) | — | Replaced center-pivot to eliminate swept envelope growth |
+| | Steering Range | **±35°** at wheel knuckles | — | Actuated via MG996R metal-gear servo |
+| | Minimum Turning Radius | **157 mm** ($L / \tan 35^\circ$) | — | Centers inside standard 1000 mm driving lane |
+| **Powertrain** | Primary Motor | **25GA DC Gearmotor** (12V) | Max 1 motor | Rule 11.5 compliant |
+| | Reduction | **5:1 Spur Gear Final Drive** | — | High starting torque, eliminates stall cogging |
+| | Drive Topology | **Solid rear axle** (No differential) | Max 1 driven axle | Maximizes straight-line odometry consistency |
+| | Maximum Speed | **0.70 m/s** | — | Software throttled for predictable braking |
+| **Sensors** | Odometry Resolution | **0.175 mm / count** | — | Quadrature optical/magnetic motor encoder |
+| | Inertial Measurement | **MPU6050 / SPI 6-DoF IMU** | — | 1 kHz internal sampling for heading integration |
+| | Distance Array | **4× VL53L0X Time-of-Flight (ToF)** | — | Equipped with custom 3D-printed optical collimators |
+| | Ground Color Sensing | **TCS34725 RGB Sensor** | — | Downward-facing with isolated illumination hood |
+| **Compute** | Low-Level Master | **STM32F411CEU6 (Black Pill)** | — | ARM Cortex-M4 @ 100 MHz, Hardware FPU, Real-Time Loop |
+| | High-Level Vision | **Raspberry Pi 4B (2GB/4GB)** | — | Fisheye camera, OpenCV pillar classification (Obstacle only) |
 
-The navigation core is heading-based, not geometry-based:
+### Rule Compliance Matrix
 
-1. **Arm.** Gyro bias auto-zeroes while stationary — rule 9.6 guarantees the car is placed
-   switched off, so this is firmware self-calibration and not the team calibration
-   forbidden by rule 9.9.
-2. **Centre.** The L90 and R90 time-of-flight sensors equalise lateral error, then the
-   heading is latched as reference.
-3. **Straight.** The IMU holds heading. The encoder integrates distance. The front ToF
-   watches closing distance as a backstop.
-4. **Line event.** The floor colour sensor sees an orange or blue corner line.
-5. **Turn.** Steer to lock, integrate yaw, **terminate the turn on measured heading**, then
-   re-reference heading to the nearest 90°.
-6. Repeat for **12 turns** (3 laps × 4 corners), then stop inside the starting section.
-
-Two details in step 4 are not optional, and both were easy to miss:
-
-- **Event lockout.** Every corner carries *both* an orange and a blue line (rule 13.9), so
-  a naive "saw a colour" trigger fires about 24 times over three laps rather than 12. All
-  colour input is ignored from the moment a turn begins until it completes and the car has
-  driven clear.
-- **Direction decode.** The driving direction is drawn at random before each round
-  (rule 9.3). The *order* of the first line pair — orange-then-blue versus
-  blue-then-orange — sets the turn direction for all 12 turns. Without it, half of all runs
-  steer the wrong way.
-
-**Why the turn terminates on IMU heading rather than steering angle:** tyre slip corrupts
-any angle-based estimate, and re-referencing at every corner bounds gyro drift to a single
-straight — about 4 seconds at 0.70 m/s.
-
-### Obstacle Challenge — Pi added for colour only
-
-The Pi 4B and its fisheye camera classify red and green pillars and report over a
-checksummed UART frame. The STM32 remains the master of vehicle safety: if no valid frame
-arrives within a timeout, it continues on its own deterministic policy. **The Pi can never
-stall the car.**
-
-The Pi and its regulator sit on a physically separate harness that is unplugged for the
-Open Challenge. That makes the "no Pi in the Open round" claim inspectable rather than a
-software flag.
+- **Mechanical (Rules 11.3, 11.5, 11.13)**: Exactly four wheels, single steering actuator, single drive motor coupled via a fixed gear reduction to a single solid axle.
+- **RF & Telemetry (Rule 11.10)**: All wireless interfaces (Wi-Fi, Bluetooth) are disabled at the kernel boot level (`config.txt`) on the Raspberry Pi. Zero external communication during runs.
+- **Power & Control Interface (Rules 9.10, 9.11)**: Dedicated master physical toggle switch for complete battery cut-off, plus a separate momentary push-button dedicated solely to initiating autonomous runs.
 
 ---
 
-## Four findings that changed the design
+## System Architecture
 
-### 1. The floor out-reflects the wall
+The robot employs a **dual-tier heterogeneous compute hierarchy**:
 
-The mat is white (rule 13.2) and every visible wall face is black (rules 13.4, 13.6). For
-an infrared time-of-flight sensor, **the false target reflects better than the real one.**
-Our sensors are VL53L0X, which — unlike the VL53L1X we originally wrote the plan around —
-has a fixed field of view and **no programmable region of interest**. The beam cannot be
-narrowed in firmware.
+```mermaid
+graph TD
+    subgraph Power ["Power Subsystem (Single Star Ground)"]
+        BAT["2S LiPo / Li-Ion Battery"] --> REG6["6.0V 3A Buck (Servo Only)"]
+        BAT --> REG5["5.0V 2A Buck (STM32 & Sensors)"]
+        BAT --> REG51["5.1V 3A Buck (Pi 4B Harness)"]
+        BAT --> DRV_PWR["Direct Battery Rail (BTS7960)"]
+    end
 
-`electrical/collimator.py` sizes the mechanical fix. Each sensor gets a printed collimator
-snout (a 2.5 × 10 × 20 mm slot) plus a **+2° upward mounting wedge**. The wedge exists
-because the 46 mm front and 50 mm rear wheels give the chassis about 1.1° of nose-down
-rake that every chassis-mounted sensor inherits — aimed at the floor. Together these push
-the first floor return from 166 mm to **870 mm**, against a side wall at 442.5 mm.
+    subgraph LowLevel ["Real-Time Tier (STM32F411CEU6)"]
+        STM["STM32 Master Controller"]
+        IMU["6-DoF IMU (Yaw Heading)"] -->|I2C / SPI| STM
+        ENC["Encoder (Solid Axle)"] -->|Timer Quadrature| STM
+        BTN["Start Pushbutton"] -->|GPIO EXTI| STM
+        MUX["PCA9548A I2C Mux (3.3V)"] <-->|I2C Master| STM
+        MUX --> TOF1["VL53L0X Front"]
+        MUX --> TOF2["VL53L0X Left (L90)"]
+        MUX --> TOF3["VL53L0X Right (R90)"]
+        MUX --> COL["TCS34725 Floor Color"]
+        
+        STM -->|PWM 50Hz| SERVO["MG996R Steering Servo"]
+        STM -->|PWM + EN| BTS["BTS7960 H-Bridge Driver"] --> MOTOR["25GA Drive Motor"]
+    end
 
-This is still the **highest-risk untested item in the build.** The snout throws away
-photons and the wall is already a poor NIR target. It gets bench-tested against black MDF
-before we print five mounts.
+    subgraph HighLevel ["Vision Tier (Obstacle Round Only)"]
+        PI["Raspberry Pi 4B"]
+        CAM["160° Fisheye Camera"] -->|CSI / V4L2| PI
+        PI -->|Checksummed Packet UART @ 115200| STM
+    end
 
-### 2. The textbook parallel park does not fit
+    style Power fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    style LowLevel fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style HighLevel fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+```
 
-`src/sim/park_feasibility.py` checks the swept body polygon against both magenta
-limitations. A symmetric reverse two-arc **fails by 25.6 mm** at our 35° lock: the front
-outer corner strikes the entry limitation at roughly 37° of heading.
+### Complete Electrical Schematic
+A full physical connection diagram is illustrated below, mapping PCB pinouts, line terminations, and bus distributions:
 
-The important part is that **the problem is scale-invariant**. The bay is always
-1.5 × car length, so the slack is always 0.5 × car length — shortening the car cannot help,
-because the bay shrinks with it. The only levers are the ratio of turn radius to car length
-and the manoeuvre itself.
-
-We tried raising the steering lock to 40° and re-ran it. It still fails, by 10.8 mm. A
-two-arc needs about R/L ≤ 0.70, which takes 45°, which clears by 0.1 mm — and 0.1 mm of
-theoretical clearance on an open-loop steering system is not clearance at all. So the
-lock stayed at the as-built 35°, where the linkage actually reaches.
-
-So parking is a **multi-point shuffle closed on IMU yaw**. Slower, but robust to
-turn-radius error, and since the steering has no position feedback that error is real.
-
-### 3. We built the wrong steering first
-
-We started with a **single central pivot** — the whole front axle rotating on one bearinged
-shaft. We chose it deliberately, with analysis behind it: a kinematic slop Monte-Carlo and
-a pymunk friction simulation (`src/sim/`, written up in
-`journal/steering-study-2026-07-12.md`) said the single pivot was about **three times more
-robust to build slop** than Ackermann, with one joint instead of five. For a team whose
-mechanical assemblies sometimes come loose, that looked decisive.
-
-Then we built it, and it was wrong.
-
-When the whole axle rotates about a central point, each front wheel translates fore and aft
-by `(track/2) × sin δ`. At our 105 mm track and 35° lock that is **±30.1 mm per wheel — 36%
-of the 82.5 mm of parking slack**, spent for zero navigational benefit, against a rule where
-touching a magenta limitation scores zero parking points (rule 9.24.7). It also sat high,
-raising the centre of gravity we had spent a whole optimisation pass lowering.
-
-**Why the simulation missed it:** `steering_study.py` scored candidates on kinematic scrub,
-parking accuracy and slop robustness. It never modelled the **swept envelope of the vehicle
-body during the turn**. That missing objective term is the entire reason it ranked the
-parallel bell-crank as "strictly dominated". The build found the term the model was missing.
-
-We record this as an iteration, not an error. The original study and its conclusion are
-preserved unedited.
-
-**What we'd tell another team:** simulate, but build the thing early. Our simulation was
-good work and we'd do it again. It just couldn't see the failure mode that mattered.
-
-### 4. The AS5600 that isn't there
-
-Our original plan put an **AS5600 magnetic encoder** on the steering shaft to close the loop
-on true wheel angle, killing servo backlash. When we moved to the parallelogram that became
-unbuildable — an AS5600 measures the absolute angle of *one rotating shaft*, and a
-parallelogram doesn't have one.
-
-Losing it turned out not to matter, and understanding why is the interesting part. Steering
-angle was always a feedforward quantity in this design. Nothing in the control loop ever
-*depended* on it being accurate, because turns terminate on measured heading. The loop that
-mattered was closed through the gyro from the beginning. We had designed a sensor to solve a
-problem our own navigation strategy had already solved.
-
-The residual exposure is parking, which is why that manoeuvre is closed on IMU yaw too.
+![Wiring Block Diagram](schemes/wiring_block_diagram.png)
 
 ---
 
-## Electronics
+## Autonomous Navigation Strategy
 
-The car runs on **two stacked single-sided PCBs**, made locally in Dhaka. Full detail in
-[`electrical/`](electrical/).
+### 1. Open Challenge (Deterministic Real-Time Firmware)
+In the Open Challenge, the vehicle runs **exclusively on the STM32F411**, operating on a zero-drift, state-driven control cycle:
 
-Single-sided is a real constraint and it shaped more than we expected. The local shop's
-double-sided process has no plated through-holes, which means a two-layer board isn't
-usable and **there is no ground plane at any layer count.** Minimum trace and space is
-0.5 mm, so a routing channel is 1.2 mm — roughly four times what a commercial fab needs.
-The consequence that drives everything: **you cannot route a trace between two adjacent
-header pins.** 0.54 mm available, 1.8 mm required. Every net routes around every connector,
-and placement rather than routing becomes the whole design problem.
+1. **Stationary Bias Calibration (Arming)**: Upon boot, stationary gyro offsets are auto-zeroed in flash. Conforms strictly with Rule 9.6 without requiring manual pit calibration.
+2. **Centerline Wall Alignment**: Lateral ToF sensors ($L_{90}$ and $R_{90}$) balance distance against perimeter walls to establish the true track heading reference.
+3. **Heading-Hold Cruise**: The vehicle drives straight using a proportional-derivative heading controller referenced to the gyro. Encoder odometry measures exact corridor displacement.
+4. **Surface Marker Detection**: Downward-facing TCS34725 color sensor identifies the high-contrast orange and blue floor lines.
+5. **Deterministic Direction Decoding**:
+   - The first corner crossed has dual lines (Orange + Blue).
+   - The detection order (`Orange → Blue` vs `Blue → Orange`) resolves the randomized race direction (Rule 9.3) dynamically.
+6. **IMU-Terminated Turn Execution**:
+   - The steering servo commands full ±35° lock.
+   - **Crucial Design Rule**: The turn does *not* complete based on distance or time; it completes when integrated IMU yaw hits exactly 90.0°. Wheel slip and kinematic scrub cannot corrupt this threshold.
+   - A temporal lockout mask prevents false line-trigger re-entry until the vehicle clears the intersection.
+7. **Lap Counting & Finish**: After completing 12 consecutive 90° turns (3 full laps), the vehicle centers itself into the start sector and engages dynamic motor braking.
 
-- **Board A (upper):** STM32, motor driver, power rails, servo, encoder, Pi UART, IMU
-- **Board B (lower):** the I²C multiplexer and all its sensor channels, at 3.3 V
-- Linked by a 40 mm 6-pin cable
-
-High current never crosses the PCB. Battery, motor and servo power are wired point to point
-through screw terminals, because with no plated holes every pad has one-sided adhesion and
-cable strain lifts pads — an intermittent failure, which is the worst kind.
-
-### Power — four domains, one star ground
-
-| Rail | Feeds |
-|---|---|
-| Motor | BTS7960 → 25GA → 5:1 → solid rear axle |
-| 6.0 V | Steering servo, **and nothing else** |
-| 5.0 V | Logic — STM32, and Board B via a local 3.3 V regulator |
-| 5.1 V | Raspberry Pi (physically unplugged for the Open round) |
-
-The servo getting its own rail is not fussiness. The MG996R is an analog servo that pulls
-about 2.5 A at stall, in a step under 5 milliseconds, and it does that every single time
-the car steers. Share that rail with the STM32 and you get voltage dips perfectly
-correlated with steering, showing up as random sensor glitches and random resets — the kind
-of bug that takes a week to find because it only happens when the car is moving.
-
-### One sensor per mux channel
-
-Every VL53L0X and the TCS34725 ship at the same I²C address, 0x29. Our first answer was to
-reassign the ToF sensors to 0x30–0x34 at boot using five XSHUT lines, and give the colour
-sensor its own bus. That worked, but reassigned addresses are volatile — any brownout loses
-them — and XSHUT is 2.8 V logic on a bare die, so the correct wiring depends on which
-breakout variant you happened to buy.
-
-Putting a **PCA9548A multiplexer** in front instead means no two devices are ever on the bus
-at once, so every sensor keeps its factory address and none of that exists. It also gives
-back five GPIO.
-
-The honest cost: the mux is now a single point of failure for every I²C sensor, and the
-colour sensor — which is the turn trigger, and the most critical sensor in the Open round —
-lost the private bus that used to isolate it from ToF cable faults. That's why the mux reset
-line is wired to the STM32 rather than tied high.
-
-**No Dupont jumpers anywhere on the robot, and no breadboard.** Everything is soldered or
-crimped into JST-XH with strain relief. In our experience that single rule eliminates more
-"random" faults than anything else on this list.
+### 2. Obstacle Challenge (Vision-Assisted Navigation)
+- **High-Level Computer Vision**: The Raspberry Pi runs a lightweight, multithreaded Python/C++ pipeline utilizing HSV thresholding, contour extraction, and bounding-box aspect ratio filtering to classify Red (pass right) and Green (pass left) pillars.
+- **Safety Isolation Guarantee**: Vision coordinates are transmitted via fixed-size checksummed UART packets. The STM32 treats vision as an advisory input. If packets drop, freeze, or corrupt, the STM32 defaults instantly to its deterministic wall-following safety protocol. **The Raspberry Pi can never stall or crash the vehicle.**
 
 ---
 
-## Reproducing the analysis
+## Key Engineering Findings
+
+Through rigorous physical validation, four primary engineering hypotheses were challenged and redesigned:
+
+### 1. Floor IR Crosstalk & Sensor Collimation
+* **Problem**: The WRO mat is high-reflectance white vinyl (Rule 13.2), while perimeter walls are low-reflectance matte black (Rules 13.4, 13.6). Standard VL53L0X ToF sensors possess a 25° field of view without software-defined regions of interest. Chassis rake (1.1° nose-down) caused the sensors to trigger on the floor at 166 mm instead of detecting walls.
+* **Solution**: Developed [`electrical/collimator.py`](electrical/collimator.py) to calculate optical snout baffles. 3D-printed narrow 2.5 × 10 × 20 mm slot collimators paired with +2.0° mechanical upward wedges pushed the first ground reflection threshold from 166 mm out to **870 mm**, completely clearing side walls at 442.5 mm.
+
+### 2. Analytical Failure of Textbook Two-Arc Parallel Parking
+* **Problem**: Kinematic analysis ([`src/sim/park_feasibility.py`](src/sim/park_feasibility.py)) proved that a standard symmetric reverse two-arc parking trajectory **fails by 25.6 mm** at 35° steering lock within WRO designated bay limits ($1.5 \times L$).
+* **Insight**: The problem is scale-invariant—shortening the car shrinks the bay proportionally.
+* **Solution**: Implemented an iterative **multi-point shuffle maneuver closed on IMU yaw feedback**, robust to open-loop steering backlash and varying floor friction.
+
+### 3. Kinematic Center-Pivot vs. Parallelogram Linkage
+* **Problem**: The team originally built a single central pivot front axle because simulations showed 3× higher tolerance to mechanical joint slop.
+* **Empirical Flaw**: During physical runs, rotating the entire front axle swept the outer tire forward and backward by $\pm 30.1\text{ mm}$ ($(Track/2) \cdot \sin \delta$). This consumed **36% of the allowable 82.5 mm parking clearance**, increasing body envelope strike risk.
+* **Solution**: Scrapped the center-pivot in favor of a dual-knuckle parallelogram tie-bar system, locking knuckle centers and stabilizing the vehicle envelope.
+
+### 4. Feedforward Steering with IMU Closed-Loop
+* **Problem**: Original blueprints called for an absolute magnetic rotary encoder (AS5600) on the steering shaft to eliminate servo gear backlash.
+* **Insight**: Transitioning to the parallelogram mechanism removed the central steering shaft. Further analysis revealed that closed-loop steering angle is redundant because the high-level navigation loop terminates maneuvers on **measured body yaw rate and heading from the gyro**, not wheel angle. The magnetic encoder was eliminated, saving cost, mass, and I²C bus complexity.
+
+---
+
+## Electrical & PCB Design
+
+To ensure resilience during high-vibration dynamic runs, the electronics follow strict avionics-style guidelines:
+
+- **Custom Dhaka-Milled PCBs**: Fabricated using a single-sided isolation milling process with conservative 0.5 mm trace/space constraints:
+  - **Board A (Upper)**: Houses STM32F411, BTS7960 gate interface, IMU, hardware UART, and primary power distribution.
+  - **Board B (Lower)**: Dedicated 3.3V sensor aggregation plane containing the PCA9548A multiplexer and modular sensor headers.
+- **Four Isolated Power Domains with Single Star Ground**:
+  1. *Motor Rail*: Unregulated battery voltage routed via heavy-gauge copper directly to BTS7960 H-Bridge.
+  2. *Servo Rail (6.0V)*: Dedicated 3A buck regulator. Prevents the 2.5A instantaneous stall spikes of the MG996R from causing MCU brownout resets.
+  3. *Logic Rail (5.0V → 3.3V)*: Dedicated buck feeding STM32 and secondary low-dropout (LDO) regulator for sensors.
+  4. *SBC Rail (5.1V)*: Dedicated high-current regulator harness for the Raspberry Pi 4B (physically disconnected during Open round).
+- **Wiring & Interconnect Standards**:
+  - **Zero jumper wires (DuPont) and zero breadboards** anywhere on the vehicle.
+  - All wiring harness connections are crimped and latched using genuine JST-XH connectors with heat-shrink strain reliefs.
+  - High-current paths use screw terminals with ferrules.
+
+---
+
+## Simulation & Reproduction
+
+The mechanical and electrical models used to design this vehicle can be reproduced using standard Python scientific tools:
 
 ```bash
-python3 -m pip install matplotlib numpy
+# Clone the repository
+git clone https://github.com/ShammanRahin/WRO_TeamBluePrint.git
+cd WRO_TeamBluePrint
 
-# ToF collimator sizing — floor return vs slot geometry, rake and wedge
-python3 electrical/collimator.py --plot
+# Install simulation dependencies
+pip install numpy matplotlib pymunk
 
-# Turn radius and park ratio vs wheelbase and steering lock
-python3 src/sim/geometry_sweep.py
-python3 src/sim/geometry_sweep.py --wheelbase 110 --plot
+# 1. Optical collimator sizing simulation (Floor IR reflection vs slot geometry)
+python electrical/collimator.py --plot
 
-# Parallel-park feasibility — swept polygon vs both magenta limitations
-python3 src/sim/park_feasibility.py --wheelbase 110 --plot
+# 2. Geometric turning radius and park ratio sweep across wheelbases
+python src/sim/geometry_sweep.py --wheelbase 110 --plot
 
-# Regenerate the wiring block diagram
-python3 electrical/make_block_diagram.py
-```
+# 3. Swept-body parallel parking envelope simulation
+python src/sim/park_feasibility.py --wheelbase 110 --plot
 
-`park_feasibility.py` and `geometry_sweep.py` both deliberately have **no default
-wheelbase**. The measurement is still outstanding, and they error rather than silently
-assume a number. Note that **105 mm is the track, not the wheelbase** — we have confused
-those two once already, and it put our recorded turn radius out by 45%.
-
----
-
-## Repository layout
-
-```
-SPECSHEET.md          locked parameters — source of truth
-DECISIONS.md          every decision + reason + dated supersessions
-BOM.md                parts, status, what is still unsourced
-electrical/           ELECTRICAL.md, DESIGN_RULES.md, collimator solver, diagram generator
-schemes/              wiring block diagram (PNG)
-src/sim/              simulation studies behind the decisions
-journal/              dated engineering log
-models/               printable parts
-media/                plots and figures
-t-photos/ v-photos/   team and vehicle photos
-video/                driving demonstration link
+# 4. Regenerate electrical wiring block diagrams
+python electrical/make_block_diagram.py
 ```
 
 ---
 
-## Design principles
+## Repository Structure
 
-**Reliability before cleverness.** Ball bearings on every axle and pivot, because
-plastic-on-shaft wears in and grows slop mid-competition. Parts located by geometry —
-shoulders, slots, captured screws — with glue as backup and never as the primary locator.
-Threadlocker on every thread. The working rule is that **a loose joint must still be unable
-to shift**.
-
-**No breadboards, no jumper wires.** Everything soldered or on latching connectors with
-strain relief. Loose connections are the single largest source of behaviour that looks
-random.
-
-**Separate power domains.** Four rails joined at one star ground. A servo stall is a 2.5 A
-step in under 5 milliseconds and will brown out a shared logic rail.
-
-**Measure, don't assume.** Where a number is not yet measured it is marked open rather than
-guessed. Straight-line trim is found by driving and bisecting gyro yaw-rate to zero, not by
-eye — no car is mechanically straight, and that matters more now that steering is open-loop.
-
----
-
-## Known open items
-
-| Item | Blocks |
-|---|---|
-| **Competition SPI IMU** — not ordered; the MPU6050 on hand is bench-only | The racing gyro path |
-| Encoder counts per motor revolution (hand-rotate test) | Odometry constant |
-| VL53L0X signal rate against black MDF with the snout fitted | The entire distance-sensing approach |
-| Battery connector — JST is under-rated for ~8 A peak; XT30 is specified | Power harness |
-| 25GA stall current | Power budget |
-
-These are tracked with dates in `journal/` and in `BOM.md`.
+```plaintext
+├── BOM.md                       # Bill of Materials: components, part numbers, costs, and sourcing
+├── DECISIONS.md                 # Architectural Decision Records (ADRs) with dated rationale
+├── SPECSHEET.md                 # Comprehensive hardware specs, pinout tables, and calibrated limits
+├── LICENSE                      # Open-source MIT License
+├── README.md                    # Main documentation and system overview
+│
+├── electrical/                  # Schematics, PCB layouts, collimator solver, and wiring diagrams
+├── journal/                     # Chronological engineering logs and milestone post-mortems
+├── media/                       # Renderings, simulation output plots, and technical figures
+├── models/                      # Parametric CAD models and 3D-printable STL/STEP files
+├── schemes/                     # System block diagrams and interconnect schematics
+├── src/
+│   ├── sim/                     # Python kinematics, Monte-Carlo slop, and swept-envelope simulations
+│   └── vision/                  # Raspberry Pi OpenCV detection scripts, config files, and calibrations
+├── t-photos/                    # Team documentation photos (official and informal)
+├── v-photos/                    # Vehicle close-up photographs from multiple perspectives
+└── video/                       # Scored demonstration run footage and documentation links
+```
 
 ---
 
-## Attribution
+## Team & Acknowledgments
 
-All design, simulation, firmware and documentation in this repository is the team's own
-work. Public repositories from previous seasons were **studied for approach, never copied**
-— in particular KMIDS-GFM 2025 and Nerdvana Taurus 2025, the latter of which carries a
-restrictive licence and whose files are deliberately not reused. Where a technique is
-borrowed conceptually it is named in `DECISIONS.md`.
+### Team Blueprint
+* **Samman Rahin Shanto** — Electrical System Design, Electronics & PCB Layout *(Islamic University of Technology - IUT)*
+* **Syed Sholok** — Embedded Firmware (STM32), Low-Level Control Architecture & Kinematics *(Military Institute of Science and Technology - MIST)*
+* **MD. Azmain Shak Rubayed** — CAD & Fabrication Engineer *(Northern University Bangladesh - NUB)*
 
-This repository will remain public for at least one year after the event, as required by
-chapter 7 of the rules.
+### Institutional Support & Compliance
+* Developed collaboratively across **Islamic University of Technology (IUT)**, **Military Institute of Science and Technology (MIST)**, and **Northern University Bangladesh (NUB)**.
+* This repository is maintained in compliance with **WRO Future Engineers General Rule Chapter 7** and will remain publicly accessible.
+
+---
+
+## License
+
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.

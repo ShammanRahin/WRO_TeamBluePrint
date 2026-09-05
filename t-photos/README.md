@@ -1,4 +1,4 @@
-﻿# t-photos
+# t-photos
 
 Team photos, as required by WRO. Add two images here:
 
@@ -7,6 +7,6 @@ Team photos, as required by WRO. Add two images here:
 
 ## Team
 
-- Solaiman Kalam - IUT (Islamic University of Technology), CSE - computer vision
-- Syed Sholok - MIST (Military Institute of Science and Technology) - firmware & control
-- Samman Rahin Shanto - electrical & mechanical
+- Samman Rahin Shanto - IUT(Islamic University of Technology) - electrical & electronics
+- Syed Sholok - MIST (Military Institute of Science and Technology) - Firmware & control
+- MD. Azmain Shak Rubayed - NUB(Northern University Bangladesh) - CAD and Fabrication
