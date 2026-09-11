@@ -54,39 +54,39 @@
 
 ## 1. The team
 
-### 👋 Hi, we're Blueprint
+### Hi, we're Blueprint
 
 > **Three students. Three universities. One autonomous car brought to life over 2 AM calls and assembled wherever there was a working soldering iron.**
 
 We're from **IUT**, **MIST**, and **NUB** — three campuses scattered across Bangladesh. Because we're miles apart, this robot wasn't built in a single high-tech lab. It came together over late-night screenshares, sleepless debugging marathons, and shared dorm floors.
 
 It paid off:
-- 🏆 **National Champions** — Won the 2026 WRO Bangladesh National Final (*Future Engineers*).
-- 🌏 **Asia Pacific Championship** — Racing in Hyderabad, India this September.
+- **National Champions** — Won the 2026 WRO Bangladesh National Final (*Future Engineers*).
+- **Asia Pacific Championship** — Racing in Hyderabad, India this September.
 
 ---
 
-#### 💡 How We Work: *We Don't Guess.*
+#### How We Work: *We Don't Guess.*
 
 Every number in this repository was calculated, simulated, or bench-measured before it ever touched the hardware.
 
 We also don't hide our failures. Dig into the docs and you'll find:
-- 🛠️ **A scrapped steering system** that looked great on paper but failed on the track.
-- 📐 **Impossible parking math** that our own kinematics proved couldn't clear the box.
-- 👁️ **A sensor that wouldn't stop staring at the floor** instead of the walls.
+- **A scrapped steering system** that looked great on paper but failed on the track.
+- **Impossible parking math** that our own kinematics proved couldn't clear the box.
+- **A sensor that wouldn't stop staring at the floor** instead of the walls.
 
 We leave our mistakes in the open because **a design decision only matters if you can see what it beat.**
 
 ---
 
-#### ⚡ Start Here
+#### Start Here
 
 | Document | What's inside |
 |:---|:---|
-| 📊 [`SPECSHEET.md`](SPECSHEET.md) | **The hard numbers** — exact geometry, pin maps, and calibrated limits. |
-| 🧠 [`DECISIONS.md`](DECISIONS.md) | **The engineering logic** — every choice, the data behind it, and what got replaced. |
-| 🧾 [`BOM.md`](BOM.md) | **What it takes to build** — what we bought, what it cost, and parts sourcing. |
-| 📔 [`journal/`](journal/) | **The build log** — the messy, unfiltered day-by-day reality of building this car. |
+| [`SPECSHEET.md`](SPECSHEET.md) | **The hard numbers** — exact geometry, pin maps, and calibrated limits. |
+| [`DECISIONS.md`](DECISIONS.md) | **The engineering logic** — every choice, the data behind it, and what got replaced. |
+| [`BOM.md`](BOM.md) | **What it takes to build** — what we bought, what it cost, and parts sourcing. |
+| [`journal/`](journal/) | **The build log** — the messy, unfiltered day-by-day reality of building this car. |
 
 ---
 
