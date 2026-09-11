@@ -1,44 +1,104 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 400" width="920" height="400" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
-  <rect width="920" height="400" fill="#FAFAF7"/>
-  <defs><marker id="s1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2B2B28"/></marker>
-        <marker id="s1L" markerWidth="9" markerHeight="9" refX="1" refY="4.5" orient="auto"><path d="M9,0 L0,4.5 L9,9 z" fill="#2B2B28"/></marker></defs>
-  <text x="34" y="40" font-size="20" font-weight="700" fill="#2B2B28">Why the centre pivot was scrapped</text>
-  <text x="34" y="63" font-size="13.5" fill="#6B6B63">Simulation preferred it. The physical car disagreed, and the car wins.</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 500" width="960" height="500" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
+  <rect width="960" height="500" fill="#FAFAF7"/>
+  <defs>
+    <marker id="e1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2B2B28"/></marker>
+    <marker id="e1L" markerWidth="9" markerHeight="9" refX="1" refY="4.5" orient="auto"><path d="M9,0 L0,4.5 L9,9 z" fill="#2B2B28"/></marker>
+  </defs>
 
-  <!-- LEFT: centre pivot -->
-  <text x="70" y="108" font-size="14" font-weight="700" fill="#B4452F">CENTRE PIVOT — rejected</text>
-  <rect x="70" y="126" width="340" height="200" rx="8" fill="#FFFFFF" stroke="#E3E3DC"/>
-  <line x1="240" y1="150" x2="240" y2="306" stroke="#C9C9C0" stroke-width="1.3" stroke-dasharray="5 5"/>
-  <!-- straight axle (ghost) -->
-  <rect x="150" y="216" width="180" height="9" rx="4" fill="#C9C9C0"/>
-  <rect x="138" y="196" width="16" height="48" rx="4" fill="#C9C9C0"/>
-  <rect x="326" y="196" width="16" height="48" rx="4" fill="#C9C9C0"/>
-  <!-- rotated axle -->
-  <g transform="rotate(-20 240 221)">
-    <rect x="150" y="216" width="180" height="9" rx="4" fill="#B4452F"/>
-    <rect x="138" y="196" width="16" height="48" rx="4" fill="#B4452F"/>
-    <rect x="326" y="196" width="16" height="48" rx="4" fill="#B4452F"/>
+  <text x="34" y="40" font-size="20" font-weight="700" fill="#2B2B28">Three steering geometries, two of them wrong</text>
+  <text x="34" y="63" font-size="13.5" fill="#6B6B63">Each one was designed, built, driven, measured, and replaced because of what the measurement said. Top view, turning left.</text>
+
+  <!-- ============ PANEL 1 : CENTRE PIVOT ============ -->
+  <g transform="translate(30,86)">
+    <rect x="0" y="0" width="290" height="252" rx="9" fill="#FFFFFF" stroke="#E3E3DC"/>
+    <rect x="0" y="0" width="290" height="30" rx="9" fill="#F7E9E4"/>
+    <rect x="0" y="20" width="290" height="10" fill="#F7E9E4"/>
+    <text x="14" y="20" font-size="12.5" font-weight="700" fill="#B4452F">1 · CENTRE PIVOT — rejected</text>
+
+    <!-- chassis -->
+    <rect x="112" y="72" width="66" height="120" rx="6" fill="#F2F2EC" stroke="#D8D8D0"/>
+    <!-- rear axle -->
+    <rect x="95" y="176" width="100" height="6" rx="3" fill="#9A9A90"/>
+    <rect x="86" y="166" width="12" height="26" rx="3" fill="#57574F"/>
+    <rect x="192" y="166" width="12" height="26" rx="3" fill="#57574F"/>
+    <!-- ghost straight front axle -->
+    <rect x="95" y="76" width="100" height="6" rx="3" fill="#D8D8D0"/>
+    <rect x="86" y="66" width="12" height="26" rx="3" fill="#D8D8D0"/>
+    <rect x="192" y="66" width="12" height="26" rx="3" fill="#D8D8D0"/>
+    <!-- rotated whole axle -->
+    <g transform="rotate(-22 145 79)">
+      <rect x="95" y="76" width="100" height="6" rx="3" fill="#B4452F"/>
+      <rect x="86" y="66" width="12" height="26" rx="3" fill="#B4452F"/>
+      <rect x="192" y="66" width="12" height="26" rx="3" fill="#B4452F"/>
+    </g>
+    <circle cx="145" cy="79" r="6" fill="#2B2B28"/>
+    <text x="154" y="64" font-size="10.5" fill="#6B6B63">one pivot, whole axle turns</text>
+    <!-- sweep callout -->
+    <line x1="186" y1="118" x2="204" y2="140" stroke="#2B2B28" stroke-width="1.4" marker-start="url(#e1L)" marker-end="url(#e1)"/>
+    <text x="14" y="222" font-size="12" font-weight="700" fill="#B4452F">Outer tyre sweeps ±30.1 mm fore/aft</text>
+    <text x="14" y="239" font-size="11" fill="#6B6B63">36 % of the 82.5 mm parking clearance, gone.</text>
   </g>
-  <circle cx="240" cy="221" r="7" fill="#2B2B28"/>
-  <text x="252" y="216" font-size="11" fill="#6B6B63">single pivot</text>
-  <line x1="146" y1="290" x2="176" y2="290" stroke="#2B2B28" stroke-width="1.5" marker-start="url(#s1L)" marker-end="url(#s1)"/>
-  <text x="90" y="312" font-size="12.5" font-weight="700" fill="#B4452F">outer tyre sweeps ±30.1 mm fore/aft</text>
-  <text x="90" y="328" font-size="11.5" fill="#6B6B63">= 36 % of the 82.5 mm parking clearance, gone</text>
 
-  <!-- RIGHT: parallelogram -->
-  <text x="510" y="108" font-size="14" font-weight="700" fill="#2F7D4F">PARALLELOGRAM TIE-BAR — fitted</text>
-  <rect x="510" y="126" width="340" height="200" rx="8" fill="#FFFFFF" stroke="#E3E3DC"/>
-  <!-- fixed knuckle centres -->
-  <line x1="578" y1="221" x2="782" y2="221" stroke="#C9C9C0" stroke-width="1.3" stroke-dasharray="5 5"/>
-  <g transform="rotate(-20 578 221)"><rect x="570" y="197" width="16" height="48" rx="4" fill="#2F7D4F"/></g>
-  <g transform="rotate(-20 782 221)"><rect x="774" y="197" width="16" height="48" rx="4" fill="#2F7D4F"/></g>
-  <circle cx="578" cy="221" r="6" fill="#2B2B28"/>
-  <circle cx="782" cy="221" r="6" fill="#2B2B28"/>
-  <rect x="578" y="250" width="204" height="7" rx="3" fill="#2F7D4F"/>
-  <text x="618" y="274" font-size="11" fill="#6B6B63">tie bar — both knuckles, one servo</text>
-  <text x="530" y="312" font-size="12.5" font-weight="700" fill="#2F7D4F">knuckle centres stay put</text>
-  <text x="530" y="328" font-size="11.5" fill="#6B6B63">body envelope does not grow with steering angle</text>
+  <!-- ============ PANEL 2 : PARALLELOGRAM ============ -->
+  <g transform="translate(335,86)">
+    <rect x="0" y="0" width="290" height="252" rx="9" fill="#FFFFFF" stroke="#E3E3DC"/>
+    <rect x="0" y="0" width="290" height="30" rx="9" fill="#F7E9E4"/>
+    <rect x="0" y="20" width="290" height="10" fill="#F7E9E4"/>
+    <text x="14" y="20" font-size="12.5" font-weight="700" fill="#B4452F">2 · PARALLELOGRAM — rejected</text>
 
-  <rect x="70" y="348" width="780" height="34" rx="6" fill="#F2F2EC" stroke="#E3E3DC"/>
-  <text x="86" y="370" font-size="12" fill="#2B2B28">Simulation said the centre pivot tolerated joint slop 3× better. It was built, driven, measured, and replaced. The steering encoder went with it — every manoeuvre ends on body yaw, not wheel angle.</text>
+    <rect x="112" y="72" width="66" height="120" rx="6" fill="#F2F2EC" stroke="#D8D8D0"/>
+    <rect x="95" y="176" width="100" height="6" rx="3" fill="#9A9A90"/>
+    <rect x="86" y="166" width="12" height="26" rx="3" fill="#57574F"/>
+    <rect x="192" y="166" width="12" height="26" rx="3" fill="#57574F"/>
+    <!-- tie bar -->
+    <rect x="100" y="100" width="90" height="5" rx="2" fill="#B4452F"/>
+    <!-- both wheels at the SAME angle -->
+    <g transform="rotate(-35 100 79)"><rect x="94" y="66" width="12" height="26" rx="3" fill="#B4452F"/></g>
+    <g transform="rotate(-35 190 79)"><rect x="184" y="66" width="12" height="26" rx="3" fill="#B4452F"/></g>
+    <circle cx="100" cy="79" r="4" fill="#2B2B28"/><circle cx="190" cy="79" r="4" fill="#2B2B28"/>
+    <text x="112" y="60" font-size="10.5" fill="#6B6B63">both wheels, identical angle</text>
+    <!-- parallel radius lines that never meet -->
+    <line x1="100" y1="79" x2="12" y2="141" stroke="#B4452F" stroke-width="1.3" stroke-dasharray="5 4"/>
+    <line x1="190" y1="79" x2="102" y2="141" stroke="#B4452F" stroke-width="1.3" stroke-dasharray="5 4"/>
+    <text x="16" y="162" font-size="11" font-weight="700" fill="#B4452F">parallel — no shared centre</text>
+    <text x="14" y="206" font-size="12" font-weight="700" fill="#B4452F">The inner wheel is on a tighter radius</text>
+    <text x="14" y="222" font-size="11" fill="#6B6B63">but is given the same angle, so the difference</text>
+    <text x="14" y="237" font-size="11" fill="#6B6B63">comes out as scrub: squeal, wide exits, and a</text>
+    <text x="14" y="252" font-size="11" fill="#6B6B63">turn angle that changes run to run.</text>
+  </g>
+
+  <!-- ============ PANEL 3 : ACKERMANN ============ -->
+  <g transform="translate(640,86)">
+    <rect x="0" y="0" width="290" height="252" rx="9" fill="#FFFFFF" stroke="#E3E3DC"/>
+    <rect x="0" y="0" width="290" height="30" rx="9" fill="#EAF3EC"/>
+    <rect x="0" y="20" width="290" height="10" fill="#EAF3EC"/>
+    <text x="14" y="20" font-size="12.5" font-weight="700" fill="#2F7D4F">3 · TRUE ACKERMANN — fitted</text>
+
+    <rect x="112" y="72" width="66" height="120" rx="6" fill="#F2F2EC" stroke="#D8D8D0"/>
+    <rect x="95" y="176" width="100" height="6" rx="3" fill="#9A9A90"/>
+    <rect x="86" y="166" width="12" height="26" rx="3" fill="#57574F"/>
+    <rect x="192" y="166" width="12" height="26" rx="3" fill="#57574F"/>
+    <!-- inner wheel turns MORE -->
+    <g transform="rotate(-45 100 79)"><rect x="94" y="66" width="12" height="26" rx="3" fill="#2F7D4F"/></g>
+    <g transform="rotate(-24 190 79)"><rect x="184" y="66" width="12" height="26" rx="3" fill="#2F7D4F"/></g>
+    <circle cx="100" cy="79" r="4" fill="#2B2B28"/><circle cx="190" cy="79" r="4" fill="#2B2B28"/>
+    <text x="104" y="58" font-size="10.5" fill="#2F7D4F">inner turns more</text>
+    <text x="186" y="58" font-size="10.5" fill="#2F7D4F">outer less</text>
+    <!-- radius lines converging on one centre on the rear axle line -->
+    <line x1="100" y1="79" x2="22" y2="179" stroke="#2F7D4F" stroke-width="1.4" stroke-dasharray="5 4"/>
+    <line x1="190" y1="79" x2="22" y2="179" stroke="#2F7D4F" stroke-width="1.4" stroke-dasharray="5 4"/>
+    <line x1="22" y1="179" x2="95" y2="179" stroke="#9A9A90" stroke-width="1.2" stroke-dasharray="4 4"/>
+    <circle cx="22" cy="179" r="6.5" fill="#2F7D4F"/>
+    <text x="14" y="200" font-size="11" font-weight="700" fill="#2F7D4F">one centre, on the rear axle line</text>
+    <text x="14" y="224" font-size="12" font-weight="700" fill="#2F7D4F">Every wheel rolls, none scrubs</text>
+    <text x="14" y="240" font-size="11" fill="#6B6B63">Steering arms angled so their extensions meet</text>
+    <text x="14" y="255" font-size="11" fill="#6B6B63">at the centre of the rear axle. 100 % Ackermann.</text>
+  </g>
+
+  <!-- footer -->
+  <rect x="30" y="386" width="900" height="82" rx="8" fill="#F2F2EC" stroke="#E3E3DC"/>
+  <text x="46" y="408" font-size="12.5" font-weight="700" fill="#2B2B28">Why this mattered more than it looks</text>
+  <text x="46" y="428" font-size="12" fill="#4A4A44">Scrub is not just lost grip. A scrubbing tyre turns further than the car travels, so the encoder over-reads — and the lane-gap correction in section 5</text>
+  <text x="46" y="445" font-size="12" fill="#4A4A44">measures lateral position purely by odometry. Parallelogram steering was quietly corrupting the one sensor the whole navigation scheme trusts.</text>
+  <text x="46" y="462" font-size="12" fill="#4A4A44">Simulation had preferred the earlier geometries both times. The car disagreed both times. The car wins.</text>
 </svg>

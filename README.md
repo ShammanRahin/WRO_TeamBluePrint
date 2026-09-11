@@ -204,7 +204,7 @@ Autonomous miniature racing requires solving complex, coupled real-time problems
 | **Chassis** | Wheelbase ($L$) | **110 mm** | Measured | Optimized against turning radius |
 | | Track Width ($W$) | **105 mm** (center-to-center) / **115 mm** (extreme) | — | 115 mm total outer width |
 | | Wheel Diameter | **46 mm** (Front) / **50 mm** (Rear) | — | 1.1° natural forward rake |
-| **Kinematics** | Steering Mechanism | **Parallelogram Tie-Bar** (Single Servo) | — | Replaced center-pivot to eliminate swept envelope growth |
+| **Kinematics** | Steering Mechanism | **True Ackermann linkage**, 100 % (single servo) | — | Third geometry. Inner wheel turns further than outer, so nothing scrubs |
 | | Steering Range | **±35°** at wheel knuckles | — | Actuated via JX PS-1171MG digital metal-gear servo |
 | | Minimum Turning Radius | **157 mm** ($L / \tan 35^\circ$) | — | Centers inside standard 1000 mm driving lane |
 | **Powertrain** | Primary Motor | **25GA DC Gearmotor** (12V) | Max 1 motor | Rule 11.5 compliant |
@@ -498,7 +498,7 @@ declare a second corner immediately and spin.
 
 ---
 
-### The lane-gap correction — the part that is ours
+### The lane-gap correction: the part that is ours
 
 <p align="center"><img src="media/diagrams/lane-gap-correction.svg" alt="Radial corner lines used as a ruler for lateral position" width="100%"/></p>
 
@@ -787,13 +787,49 @@ Through rigorous physical validation, four primary engineering hypotheses were c
 * **Insight**: The problem is scale-invariant—shortening the car shrinks the bay proportionally.
 * **Solution**: Implemented an iterative **multi-point shuffle maneuver closed on IMU yaw feedback**, robust to open-loop steering backlash and varying floor friction.
 
-### 3. Centre pivot versus parallelogram linkage
+### 3. Three steering geometries, two of them wrong
 
-<p align="center"><img src="media/diagrams/steering-evolution.svg" alt="The centre pivot sweeps the outer tyre fore and aft; the parallelogram does not" width="100%"/></p>
+<p align="center"><img src="media/diagrams/steering-evolution.svg" alt="Centre pivot, parallelogram and true Ackermann compared" width="100%"/></p>
 
-* **Problem**: The team originally built a single central pivot front axle because simulations showed 3× higher tolerance to mechanical joint slop.
-* **Empirical Flaw**: During physical runs, rotating the entire front axle swept the outer tire forward and backward by $\pm 30.1\text{ mm}$ ($(Track/2) \cdot \sin \delta$). This consumed **36% of the allowable 82.5 mm parking clearance**, increasing body envelope strike risk.
-* **Solution**: Scrapped the center-pivot in favor of a dual-knuckle parallelogram tie-bar system, locking knuckle centers and stabilizing the vehicle envelope.
+**Attempt one — centre pivot.** Simulation said a single central pivot tolerated
+mechanical joint slop three times better than a linkage, so that is what was
+built. On the car it was wrong. Rotating the whole front axle swept the outer
+tyre ±30.1 mm fore and aft — `(track / 2) · sin δ` — which consumed 36 % of the
+82.5 mm parking clearance and raised the risk of a body strike. Scrapped.
+
+**Attempt two — parallelogram tie-bar.** Both knuckles driven to the same angle
+by one tie bar. It fixed the swept envelope: knuckle centres stay put, so the
+body envelope no longer grows with steering angle. It drove acceptably on the
+bench and badly on the mat.
+
+The reason is geometric and we should have caught it in the maths. In any turn
+the inner wheel is on a tighter radius than the outer, so it needs a *larger*
+steering angle. A parallelogram gives both wheels the same angle. That angular
+difference does not disappear — it comes out as scrub. What we actually
+observed:
+
+- audible squeal and visible scuffing through corners
+- wide corner exits, with the lane-gap correction constantly pulling the car
+  back in
+- the same commanded steering angle producing a different heading change from
+  one run to the next
+
+**Attempt three — true Ackermann, and this is what is on the car.** The steering
+arms are angled so that their extensions meet at the centre of the rear axle.
+At any steering angle both front wheels are perpendicular to a radius drawn
+from one shared turn centre, so every wheel rolls and none scrubs. 100 %
+Ackermann, still one servo.
+
+**Why this mattered more than a grip problem.** A scrubbing tyre rotates further
+than the car travels, so the encoder over-reads. The lane-gap correction in
+[section 5](#the-lane-gap-correction-the-part-that-is-ours) measures lateral
+position purely by odometry. Parallelogram steering was quietly corrupting the
+one sensor the entire navigation scheme trusts — the slip did not just cost
+grip, it fed bad numbers into the lane correction, which then steered on them.
+
+Simulation preferred the losing geometry both times. The car disagreed both
+times. When the model and the vehicle disagree, the vehicle is right.
+
 
 ### 4. Feedforward Steering with IMU Closed-Loop
 * **Problem**: Original blueprints called for an absolute magnetic rotary encoder (AS5600) on the steering shaft to eliminate servo gear backlash.
@@ -884,12 +920,17 @@ budget is section 3. Read both before you power anything.
 
 ### 3. Assembly order
 
-1. **Steering first.** Build the parallelogram linkage on the bench and check it
-   moves freely through its full travel before anything else goes on the
-   chassis. Knuckle centres must stay fixed as the wheels turn — if the whole
-   axle rotates you have built a centre-pivot, which we tried and abandoned
-   (it swept the outer tyre +/-30 mm fore and aft and ate 36% of the parking
-   clearance).
+1. **Steering first.** Build the Ackermann linkage on the bench and check it
+   through its full travel before anything else goes on the chassis. Two things
+   to verify, both of which we got wrong on earlier attempts:
+   - **Knuckle centres must stay fixed** as the wheels turn. If the whole axle
+     rotates you have built a centre pivot, which sweeps the outer tyre ±30 mm
+     fore and aft and eats 36 % of the parking clearance.
+   - **The inner wheel must turn further than the outer.** Put the linkage at
+     full lock and check by eye that the angles differ. If they are equal you
+     have built a parallelogram, and it will scrub. The steering arms must be
+     angled so their extensions meet at the centre of the rear axle — that is
+     the entire Ackermann condition and it is easy to check with two rulers.
 2. **Powertrain.** Motor, gear reduction, solid rear axle. No differential —
    a solid axle keeps straight-line odometry consistent, which the whole
    lane-gap correction depends on. Check the encoder coupler grub screw is
@@ -1092,9 +1133,13 @@ lands wherever that stack puts it. On the nationals car it was **69 degrees**.
 You cannot eyeball this. Half a degree of steer is invisible across a workbench
 and puts the car 9 cm off line over a metre.
 
-> The current build runs a **JX PS-1171MG** where the nationals car had an
-> **MG996R**. Different servo, different spline, different centre. The 69.0 in
-> `hardware_config.h` is from the old car and **must be re-measured**.
+> **Two changes invalidate every steering number below.** The current build
+> runs a **JX PS-1171MG** where the nationals car had an **MG996R** — different
+> servo, different spline, different centre. And the linkage is now **true
+> Ackermann**, not the parallelogram those numbers were measured on. The 69.0 in
+> `hardware_config.h`, both lock limits, and the whole of
+> [step 6](#6-ninety-degree-turns) and [step 7](#7-heading-correction-gain)
+> **must be re-run on the new car.**
 
 **How the sketch finds it.** Sweep candidate angles either side of your best
 guess. Drive a fixed distance at each one and record how much heading the IMU
@@ -1472,6 +1517,17 @@ The nationals car and the Hyderabad car are not the same vehicle.
   a BNO085 running its own sensor fusion.
 - **ToF count reduced** to two, front and rear protection, now that lateral
   position comes from the lane-gap measurement rather than from wall following.
+- **Steering changed again, parallelogram to true Ackermann.** The
+  parallelogram solved the swept-envelope problem the centre pivot had, but
+  drove both front wheels to the same angle. In a turn the inner wheel is on a
+  tighter radius and needs more angle, and the difference came out as scrub:
+  squeal through corners, wide exits, and a commanded steering angle that gave
+  a different heading change each run. Worse, a scrubbing tyre makes the
+  encoder over-read, and the lane-gap correction is pure odometry — so the
+  steering geometry was corrupting the navigation input. Replaced with a 100 %
+  Ackermann linkage whose arm extensions meet at the rear axle centre. Built
+  and driving. Chassis dimensions changed with it; the spec sheet numbers are
+  being re-measured.
 
 ---
 
@@ -1546,6 +1602,23 @@ when the corner condition fired.
 
 **Fix.** Corner turns take absolute priority over everything, avoidance
 included. A missed pillar costs points; a missed corner costs the run.
+
+### The car squeals in corners and runs wide
+
+**Symptom.** Audible scrub through turns, scuff marks on the mat, wide corner
+exits, and the same commanded steering angle giving a different heading change
+run to run.
+
+**Cause.** Parallelogram steering. Both front wheels are being driven to the
+same angle, but the inner wheel is on a tighter radius and needs more. The
+difference comes out as scrub.
+
+**Fix.** True Ackermann — angle the steering arms so their extensions meet at
+the centre of the rear axle. Check it with two rulers before you print.
+
+**Watch out for the second-order effect.** A scrubbing tyre turns further than
+the car travels, so the encoder over-reads, and the lane-gap correction is pure
+odometry. A steering geometry fault shows up as a navigation fault.
 
 ### Distance readings drift over the session
 
