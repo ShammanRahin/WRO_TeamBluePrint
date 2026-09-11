@@ -1,7 +1,7 @@
 # Team Blueprint — WRO Future Engineers 2026
 
 <p align="center">
-  <img src="media/banner.jpg" alt="Team Blueprint - WRO Future Engineers 2026" width="100%"/>
+  <img src="media/banner.gif" alt="Team Blueprint - WRO Future Engineers 2026" width="100%"/>
 </p>
 
 <div align="center">
