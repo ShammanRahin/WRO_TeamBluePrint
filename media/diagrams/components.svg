@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 830" width="1000" height="830" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
+<rect width="1000" height="830" fill="#FAFAF7"/>
+<text x="26" y="42" font-size="20" font-weight="700" fill="#2B2B28">What is on the car</text>
+<text x="26" y="65" font-size="13.5" fill="#6B6B63">Twelve components. Colour marks the subsystem each one belongs to. Drawn for this document, so nothing here carries a third-party image licence.</text>
+<rect x="26" y="86" width="11" height="11" rx="2.5" fill="#3B7DD8"/>
+<text x="44" y="96" font-size="11" fill="#6B6B63">real-time control</text>
+<rect x="212" y="86" width="11" height="11" rx="2.5" fill="#C2711B"/>
+<text x="230" y="96" font-size="11" fill="#6B6B63">power and motion</text>
+<rect x="398" y="86" width="11" height="11" rx="2.5" fill="#6B4FA8"/>
+<text x="416" y="96" font-size="11" fill="#6B6B63">sensing</text>
+<rect x="584" y="86" width="11" height="11" rx="2.5" fill="#0E8C7A"/>
+<text x="602" y="96" font-size="11" fill="#6B6B63">perception</text>
+<g transform="translate(22,128)">
+<rect x="0" y="0" width="238" height="214" rx="9" fill="#FFFFFF" stroke="#E3E3DC"/>
+<rect x="0" y="0" width="4" height="214" rx="2" fill="#3B7DD8"/>
+<g transform="translate(18,20)"><rect x="0" y="0" width="150" height="56" rx="4" fill="#3B7DD8" opacity="0.16" stroke="#3B7DD8" stroke-width="1.4"/><rect x="8" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="15" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="22" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="29" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="36" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="43" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="50" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="57" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="64" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="71" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="78" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="85" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="92" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="99" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="106" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="113" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="120" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="127" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="134" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="141" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="8" y="52.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="15" y="52.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="22" y="52.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="29" y="52.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="36" y="52.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="43" y="52.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="50" y="52.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="57" y="52.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="64" y="52.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="71" y="52.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="78" y="52.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="85" y="52.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="92" y="52.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="99" y="52.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="106" y="52.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="113" y="52.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="120" y="52.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="127" y="52.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="134" y="52.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="141" y="52.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="45.0" y="15.680000000000001" width="60.0" height="24.64" rx="2.5" fill="#2B2B28" opacity="0.82"/><circle cx="52.5" cy="20.16" r="2" fill="#FFFFFF"/><rect x="6" y="16" width="16" height="24" rx="2" fill="#2B2B28" opacity="0.5"/></g>
+<line x1="14" y1="136" x2="224" y2="136" stroke="#E3E3DC"/>
+<text x="14" y="154" font-size="12.5" font-weight="700" fill="#2B2B28">WeAct BlackPill</text>
+<text x="14" y="171" font-size="10.5" fill="#6B6B63">STM32F411CEU6 · Cortex-M4 100 MHz</text>
+<text x="14" y="187" font-size="10" fill="#96968C">every real-time decision, servo and motor</text>
+<text x="14" y="204" font-size="9.5" fill="#3B7DD8">USB-C · 40 pins · hardware FPU</text>
+</g>
+<g transform="translate(266,128)">
+<rect x="0" y="0" width="238" height="214" rx="9" fill="#FFFFFF" stroke="#E3E3DC"/>
+<rect x="0" y="0" width="4" height="214" rx="2" fill="#3B7DD8"/>
+<g transform="translate(18,20)"><rect x="0" y="0" width="160" height="62" rx="4" fill="#3B7DD8" opacity="0.16" stroke="#3B7DD8" stroke-width="1.4"/><rect x="8" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="15" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="22" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="29" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="36" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="43" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="50" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="57" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="64" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="71" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="78" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="85" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="92" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="99" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="106" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="113" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="120" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="127" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="134" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="141" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="148" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="155" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="162" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="169" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="176" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="183" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="48.0" y="17.360000000000003" width="64.0" height="27.28" rx="2.5" fill="#2B2B28" opacity="0.82"/><circle cx="56.0" cy="22.32" r="2" fill="#FFFFFF"/><rect x="120" y="14" width="30" height="16" rx="2" fill="#2B2B28" opacity="0.45"/><rect x="120" y="36" width="30" height="16" rx="2" fill="#2B2B28" opacity="0.45"/></g>
+<line x1="14" y1="136" x2="224" y2="136" stroke="#E3E3DC"/>
+<text x="14" y="154" font-size="12.5" font-weight="700" fill="#2B2B28">Raspberry Pi 5, 8 GB</text>
+<text x="14" y="171" font-size="10.5" fill="#6B6B63">Cortex-A76 quad @ 2.4 GHz</text>
+<text x="14" y="187" font-size="10" fill="#96968C">camera + lidar + fusion. Advisory only</text>
+<text x="14" y="204" font-size="9.5" fill="#3B7DD8">UART to the STM32 · 115200 8N1</text>
+</g>
+<g transform="translate(510,128)">
+<rect x="0" y="0" width="238" height="214" rx="9" fill="#FFFFFF" stroke="#E3E3DC"/>
+<rect x="0" y="0" width="4" height="214" rx="2" fill="#C2711B"/>
+<g transform="translate(18,20)"><rect x="0" y="0" width="140" height="58" rx="4" fill="#C2711B" opacity="0.16" stroke="#C2711B" stroke-width="1.4"/><rect x="8" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="15" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="22" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="29" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="36" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="43" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="50" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="57" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="8" y="54.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="15" y="54.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="22" y="54.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="29" y="54.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="36" y="54.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="43" y="54.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="50" y="54.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="57" y="54.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="14" y="12" width="40" height="34" rx="3" fill="#2B2B28" opacity="0.8"/><rect x="62" y="12" width="40" height="34" rx="3" fill="#2B2B28" opacity="0.8"/><rect x="110" y="10" width="22" height="38" rx="2" fill="#C2711B" opacity="0.5"/></g>
+<line x1="14" y1="136" x2="224" y2="136" stroke="#E3E3DC"/>
+<text x="14" y="154" font-size="12.5" font-weight="700" fill="#2B2B28">BTS7960 driver module</text>
+<text x="14" y="171" font-size="10.5" fill="#6B6B63">43 A half-bridge pair</text>
+<text x="14" y="187" font-size="10" fill="#96968C">RPWM + LPWM from the STM32</text>
+<text x="14" y="204" font-size="9.5" fill="#C2711B">B+/B− wired straight from the pack</text>
+</g>
+<g transform="translate(754,128)">
+<rect x="0" y="0" width="238" height="214" rx="9" fill="#FFFFFF" stroke="#E3E3DC"/>
+<rect x="0" y="0" width="4" height="214" rx="2" fill="#C2711B"/>
+<g transform="translate(18,20)"><rect x="6" y="18" width="58" height="42" rx="7" fill="#C2711B" opacity="0.22" stroke="#C2711B" stroke-width="1.4"/><rect x="64" y="24" width="34" height="30" rx="3" fill="#C2711B" opacity="0.35" stroke="#C2711B" stroke-width="1.2"/><rect x="98" y="35" width="40" height="8" rx="4" fill="#96968C"/><circle cx="20" cy="39" r="9" fill="#C2711B" opacity="0.45"/></g>
+<line x1="14" y1="136" x2="224" y2="136" stroke="#E3E3DC"/>
+<text x="14" y="154" font-size="12.5" font-weight="700" fill="#2B2B28">25GA-370 gearmotor</text>
+<text x="14" y="171" font-size="10.5" fill="#6B6B63">12 V, hall encoder on the shaft</text>
+<text x="14" y="187" font-size="10" fill="#96968C">single driven axle, no differential</text>
+<text x="14" y="204" font-size="9.5" fill="#C2711B">quadrature into TIM3 · 0.175 mm/tick</text>
+</g>
+<g transform="translate(22,350)">
+<rect x="0" y="0" width="238" height="214" rx="9" fill="#FFFFFF" stroke="#E3E3DC"/>
+<rect x="0" y="0" width="4" height="214" rx="2" fill="#C2711B"/>
+<g transform="translate(18,20)"><rect x="26" y="12" width="56" height="52" rx="3" fill="#C2711B" opacity="0.22" stroke="#C2711B" stroke-width="1.4"/><rect x="6" y="20" width="20" height="10" rx="2" fill="#C2711B" opacity="0.4"/><rect x="82" y="20" width="20" height="10" rx="2" fill="#C2711B" opacity="0.4"/><circle cx="68" cy="28" r="12" fill="#C2711B" opacity="0.45"/><rect x="64" y="4" width="8" height="26" rx="3" fill="#2B2B28" opacity="0.6"/></g>
+<line x1="14" y1="136" x2="224" y2="136" stroke="#E3E3DC"/>
+<text x="14" y="154" font-size="12.5" font-weight="700" fill="#2B2B28">JX PS-1171MG servo</text>
+<text x="14" y="171" font-size="10.5" fill="#6B6B63">17 g, digital, metal gear</text>
+<text x="14" y="187" font-size="10" fill="#96968C">steers the Ackermann linkage</text>
+<text x="14" y="204" font-size="9.5" fill="#C2711B">own 6 V rail — stall spike isolated</text>
+</g>
+<g transform="translate(266,350)">
+<rect x="0" y="0" width="238" height="214" rx="9" fill="#FFFFFF" stroke="#E3E3DC"/>
+<rect x="0" y="0" width="4" height="214" rx="2" fill="#6B4FA8"/>
+<g transform="translate(18,20)"><rect x="0" y="0" width="96" height="54" rx="4" fill="#6B4FA8" opacity="0.16" stroke="#6B4FA8" stroke-width="1.4"/><rect x="8" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="15" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="22" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="29" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="36" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="43" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="50" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="57" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="64" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="71" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="78" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="85" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="8" y="50.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="15" y="50.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="22" y="50.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="29" y="50.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="36" y="50.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="43" y="50.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="50" y="50.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="57" y="50.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="64" y="50.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="71" y="50.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="78" y="50.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="85" y="50.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="28.799999999999997" y="15.120000000000001" width="38.400000000000006" height="23.76" rx="2.5" fill="#2B2B28" opacity="0.82"/><circle cx="33.599999999999994" cy="19.439999999999998" r="2" fill="#FFFFFF"/></g>
+<line x1="14" y1="136" x2="224" y2="136" stroke="#E3E3DC"/>
+<text x="14" y="154" font-size="12.5" font-weight="700" fill="#2B2B28">BNO085 IMU</text>
+<text x="14" y="171" font-size="10.5" fill="#6B6B63">9-DoF, on-chip sensor fusion</text>
+<text x="14" y="187" font-size="10" fill="#96968C">SPI. The heading is the truth</text>
+<text x="14" y="204" font-size="9.5" fill="#6B4FA8">replaced an MPU6050 — too much drift</text>
+</g>
+<g transform="translate(510,350)">
+<rect x="0" y="0" width="238" height="214" rx="9" fill="#FFFFFF" stroke="#E3E3DC"/>
+<rect x="0" y="0" width="4" height="214" rx="2" fill="#6B4FA8"/>
+<g transform="translate(18,20)"><rect x="0" y="0" width="120" height="50" rx="4" fill="#6B4FA8" opacity="0.16" stroke="#6B4FA8" stroke-width="1.4"/><rect x="8" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="15" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="22" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="29" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="36" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="43" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="50" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="57" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="64" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="71" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="78" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="85" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="92" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="99" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="106" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="113" y="-3.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="8" y="46.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="15" y="46.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="22" y="46.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="29" y="46.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="36" y="46.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="43" y="46.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="50" y="46.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="57" y="46.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="64" y="46.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="71" y="46.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="78" y="46.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="85" y="46.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="92" y="46.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="99" y="46.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="106" y="46.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="113" y="46.5" width="4" height="7" rx="1" fill="#96968C"/><rect x="36.0" y="14.000000000000002" width="48.0" height="22.0" rx="2.5" fill="#2B2B28" opacity="0.82"/><circle cx="42.0" cy="18.0" r="2" fill="#FFFFFF"/></g>
+<line x1="14" y1="136" x2="224" y2="136" stroke="#E3E3DC"/>
+<text x="14" y="154" font-size="12.5" font-weight="700" fill="#2B2B28">TCA9548A mux</text>
+<text x="14" y="171" font-size="10.5" fill="#6B6B63">8-channel I²C multiplexer, 0x70</text>
+<text x="14" y="187" font-size="10" fill="#96968C">three channels used: ToF, ToF, colour</text>
+<text x="14" y="204" font-size="9.5" fill="#6B4FA8">own board · 10-pin IDC to the carrier</text>
+</g>
+<g transform="translate(754,350)">
+<rect x="0" y="0" width="238" height="214" rx="9" fill="#FFFFFF" stroke="#E3E3DC"/>
+<rect x="0" y="0" width="4" height="214" rx="2" fill="#6B4FA8"/>
+<g transform="translate(18,20)"><rect x="10" y="16" width="54" height="42" rx="4" fill="#6B4FA8" opacity="0.16" stroke="#6B4FA8" stroke-width="1.4"/><rect x="24" y="26" width="12" height="22" rx="2" fill="#2B2B28" opacity="0.8"/><rect x="40" y="26" width="12" height="22" rx="2" fill="#2B2B28" opacity="0.8"/><path d="M68,26 L112,14 L112,60 L68,48 Z" fill="#6B4FA8" opacity="0.2"/><rect x="64" y="30" width="8" height="14" rx="2" fill="#6B4FA8" opacity="0.7"/></g>
+<line x1="14" y1="136" x2="224" y2="136" stroke="#E3E3DC"/>
+<text x="14" y="154" font-size="12.5" font-weight="700" fill="#2B2B28">VL53L1X × 2</text>
+<text x="14" y="171" font-size="10.5" fill="#6B6B63">time-of-flight, 4 m, 940 nm</text>
+<text x="14" y="187" font-size="10" fill="#96968C">front and rear protection</text>
+<text x="14" y="204" font-size="9.5" fill="#6B4FA8">printed collimator snout · +2° wedge</text>
+</g>
+<g transform="translate(22,572)">
+<rect x="0" y="0" width="238" height="214" rx="9" fill="#FFFFFF" stroke="#E3E3DC"/>
+<rect x="0" y="0" width="4" height="214" rx="2" fill="#6B4FA8"/>
+<g transform="translate(18,20)"><rect x="18" y="14" width="56" height="46" rx="4" fill="#6B4FA8" opacity="0.16" stroke="#6B4FA8" stroke-width="1.4"/><circle cx="46" cy="33" r="9" fill="#2B2B28" opacity="0.75"/><circle cx="30" cy="50" r="4" fill="#C2711B" opacity="0.8"/><circle cx="62" cy="50" r="4" fill="#C2711B" opacity="0.8"/><path d="M28,64 L64,64 L70,80 L22,80 Z" fill="#2B2B28" opacity="0.14"/></g>
+<line x1="14" y1="136" x2="224" y2="136" stroke="#E3E3DC"/>
+<text x="14" y="154" font-size="12.5" font-weight="700" fill="#2B2B28">TCS34725</text>
+<text x="14" y="171" font-size="10.5" fill="#6B6B63">RGB + clear, with its own LED</text>
+<text x="14" y="187" font-size="10" fill="#96968C">reads the orange and blue corner lines</text>
+<text x="14" y="204" font-size="9.5" fill="#6B4FA8">light hood · thresholds on %R and %B</text>
+</g>
+<g transform="translate(266,572)">
+<rect x="0" y="0" width="238" height="214" rx="9" fill="#FFFFFF" stroke="#E3E3DC"/>
+<rect x="0" y="0" width="4" height="214" rx="2" fill="#0E8C7A"/>
+<g transform="translate(18,20)"><ellipse cx="60" cy="26" rx="42" ry="13" fill="#0E8C7A" opacity="0.28" stroke="#0E8C7A" stroke-width="1.4"/><path d="M18,26 L18,50 A42,13 0 0,0 102,50 L102,26" fill="#0E8C7A" opacity="0.16" stroke="#0E8C7A" stroke-width="1.4"/><ellipse cx="60" cy="26" rx="18" ry="6" fill="#0E8C7A" opacity="0.5"/><path d="M104,30 A46,46 0 0,1 104,58" fill="none" stroke="#0E8C7A" stroke-width="1.2" stroke-dasharray="3 3"/></g>
+<line x1="14" y1="136" x2="224" y2="136" stroke="#E3E3DC"/>
+<text x="14" y="154" font-size="12.5" font-weight="700" fill="#2B2B28">Slamtec RPLIDAR C1</text>
+<text x="14" y="171" font-size="10.5" fill="#6B6B63">360° scanning, 12 m range</text>
+<text x="14" y="187" font-size="10" fill="#96968C">obstacle ranges for the fusion loop</text>
+<text x="14" y="204" font-size="9.5" fill="#0E8C7A">USB · asyncio sealed in one thread</text>
+</g>
+<g transform="translate(510,572)">
+<rect x="0" y="0" width="238" height="214" rx="9" fill="#FFFFFF" stroke="#E3E3DC"/>
+<rect x="0" y="0" width="4" height="214" rx="2" fill="#0E8C7A"/>
+<g transform="translate(18,20)"><rect x="20" y="16" width="52" height="44" rx="4" fill="#0E8C7A" opacity="0.16" stroke="#0E8C7A" stroke-width="1.4"/><circle cx="46" cy="38" r="15" fill="#2B2B28" opacity="0.78"/><circle cx="46" cy="38" r="7" fill="#0E8C7A" opacity="0.6"/><path d="M76,22 L124,6 L124,70 L76,54 Z" fill="#0E8C7A" opacity="0.14"/></g>
+<line x1="14" y1="136" x2="224" y2="136" stroke="#E3E3DC"/>
+<text x="14" y="154" font-size="12.5" font-weight="700" fill="#2B2B28">Camera + wide lens</text>
+<text x="14" y="171" font-size="10.5" fill="#6B6B63">Picamera2, 640 × 480 at 30 Hz</text>
+<text x="14" y="187" font-size="10" fill="#96968C">pillar colour and bearing</text>
+<text x="14" y="204" font-size="9.5" fill="#0E8C7A">distance stays ∞ — the lidar fills it</text>
+</g>
+<g transform="translate(754,572)">
+<rect x="0" y="0" width="238" height="214" rx="9" fill="#FFFFFF" stroke="#E3E3DC"/>
+<rect x="0" y="0" width="4" height="214" rx="2" fill="#C2711B"/>
+<g transform="translate(18,20)"><rect x="10" y="18" width="112" height="44" rx="6" fill="#C2711B" opacity="0.2" stroke="#C2711B" stroke-width="1.4"/><rect x="22" y="26" width="28" height="28" rx="3" fill="#C2711B" opacity="0.4"/><rect x="54" y="26" width="28" height="28" rx="3" fill="#C2711B" opacity="0.4"/><rect x="86" y="26" width="28" height="28" rx="3" fill="#C2711B" opacity="0.4"/><rect x="122" y="32" width="12" height="16" rx="2" fill="#2B2B28" opacity="0.55"/></g>
+<line x1="14" y1="136" x2="224" y2="136" stroke="#E3E3DC"/>
+<text x="14" y="154" font-size="12.5" font-weight="700" fill="#2B2B28">3S LiPo pack</text>
+<text x="14" y="171" font-size="10.5" fill="#6B6B63">11.1 V nominal</text>
+<text x="14" y="187" font-size="10" fill="#96968C">four rails, one star ground</text>
+<text x="14" y="204" font-size="9.5" fill="#C2711B">one master switch breaks logic rails</text>
+</g>
+<text x="26" y="816" font-size="10.5" fill="#96968C">Part numbers, suppliers, unit costs and lead times are in BOM.md. Pin assignments are in src/tools/calibration/hardware_config.h.</text>
+</svg>

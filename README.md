@@ -196,6 +196,8 @@ Autonomous miniature racing requires solving complex, coupled real-time problems
 
 ## 3. The vehicle
 
+
+<p align="center"><img src="media/diagrams/components.svg" alt="Twelve components colour-coded by subsystem: real-time control, power and motion, sensing, perception" width="100%"/></p>
 | Category | Parameter | Measured / Engineered Value | Rule Limit / Target | Notes |
 |---|---|---|---|---|
 | **Envelope** | Scored Footprint | **165 × 115 mm** | ≤ 300 × 200 mm | Ultra-compact design to maximize parking slack |
@@ -855,7 +857,8 @@ end up with a car that behaves the same way ours does.
 
 A four-wheeled vehicle, one steered axle at the front, one driven axle at the
 rear, a real-time microcontroller doing all the driving and a single-board
-computer doing all the seeing.
+computer doing all the seeing. Every part is illustrated in
+[section 3](#3-the-vehicle).
 
 | Subsystem | Part |
 |---|---|
