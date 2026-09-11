@@ -6,23 +6,23 @@
 
 <div align="center">
 
-### 🇧🇩 National Champions — WRO Bangladesh 2026, Future Engineers
+### National Champions — WRO Bangladesh 2026, Future Engineers
 ### Heading to the WRO Open Championship Asia Pacific · Hyderabad, India · 25–27 September 2026
 
-[![National Champion](https://img.shields.io/badge/WRO%20Bangladesh%202026-National%20Champion-FFD700.svg)](#-how-we-got-here)
-[![WRO Category](https://img.shields.io/badge/WRO-Future%20Engineers%202026-brightgreen.svg)](#-wro-deliverables--compliance-checklist)
+[![National Champion](https://img.shields.io/badge/WRO%20Bangladesh%202026-National%20Champion-FFD700.svg)](#how-we-got-here)
+[![WRO Category](https://img.shields.io/badge/WRO-Future%20Engineers%202026-brightgreen.svg)](#wro-deliverables-and-compliance-checklist)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![MCU](https://img.shields.io/badge/Brain-STM32F411CEU6-blue)](SPECSHEET.md)
-[![Compute SBC](https://img.shields.io/badge/Eyes-Raspberry%20Pi%205%20(8GB)-red)](src/vision/)
+[![Compute SBC](https://img.shields.io/badge/Eyes-Raspberry%20Pi%205%20(8GB)-red)](src/pi/)
 [![Design](https://img.shields.io/badge/Method-Evidence%20over%20Vibes-orange)](DECISIONS.md)
 
-**[Hello](#-hi-were-blueprint)** • **[The Three of Us](#-meet-the-three-of-us)** • **[How We Got Here](#-how-we-got-here)** • **[The Name](#-why-blueprint)** • **[The Car](#-vehicle-specifications)** • **[How It Thinks](#-autonomous-navigation-strategy)** • **[What Broke](#-key-engineering-findings)** • **[Build It Yourself](#-software-setup--reproduction)**
+**[Hello](#hi-were-blueprint)** • **[The Three of Us](#meet-the-three-of-us)** • **[How We Got Here](#how-we-got-here)** • **[The Name](#why-blueprint)** • **[The Car](#vehicle-specifications)** • **[How It Thinks](#autonomous-navigation-strategy)** • **[What Broke](#key-engineering-findings)** • **[Build It Yourself](#software-setup-and-reproduction)**
 
 </div>
 
 ---
 
-## 👋 Hi, we're Blueprint
+## Hi, we're Blueprint
 
 Three students. Three different universities. One very small car that has to drive itself around a track without anyone touching it.
 
@@ -38,14 +38,14 @@ That's not us being humble. It's the whole point. A design decision only means s
 
 | Document | What's in it |
 |---|---|
-| 📐 [`SPECSHEET.md`](SPECSHEET.md) | Every measured number on the car — geometry, pin maps, calibrated limits |
-| 🧠 [`DECISIONS.md`](DECISIONS.md) | Every choice we made, dated, with the data behind it and what it replaced |
-| 🧾 [`BOM.md`](BOM.md) | What we bought, what it cost, what we're still waiting on |
-| 📓 [`journal/`](journal/) | The messy day-by-day version of the above |
+|  [`SPECSHEET.md`](SPECSHEET.md) | Every measured number on the car — geometry, pin maps, calibrated limits |
+|  [`DECISIONS.md`](DECISIONS.md) | Every choice we made, dated, with the data behind it and what it replaced |
+|  [`BOM.md`](BOM.md) | What we bought, what it cost, what we're still waiting on |
+|  [`journal/`](journal/) | The messy day-by-day version of the above |
 
 ---
 
-## 🧑‍🔧 Meet the three of us
+## Meet the three of us
 
 <table align="center">
 <tr>
@@ -69,24 +69,24 @@ That's not us being humble. It's the whole point. A design decision only means s
 <td align="center"><sub>If a part on this robot wasn't bought, he drew it and printed it. Chassis, knuckles, tie-bar, camera mast.</sub></td>
 </tr>
 <tr>
-<td align="center"><sub>📧 <a href="mailto:sammanrahin.iut@gmail.com">sammanrahin.iut@gmail.com</a></sub></td>
-<td align="center"><sub>📧 <a href="mailto:syedsholok.mist@gmail.com">syedsholok.mist@gmail.com</a></sub></td>
-<td align="center"><sub>📧 <a href="mailto:azmiansheikh.nub@gmail.com">azmiansheikh.nub@gmail.com</a></sub></td>
+<td align="center"><sub> <a href="mailto:sammanrahin.iut@gmail.com">sammanrahin.iut@gmail.com</a></sub></td>
+<td align="center"><sub> <a href="mailto:syedsholok.mist@gmail.com">syedsholok.mist@gmail.com</a></sub></td>
+<td align="center"><sub> <a href="mailto:azmiansheikh.nub@gmail.com">azmiansheikh.nub@gmail.com</a></sub></td>
 </tr>
 </table>
 
 ---
 
-## 🏆 How we got here
+## How we got here
 
 ### The one that matters
 
 | Season | Event | Category | Result |
 |---|---|---|---|
-| **2026** | **WRO Bangladesh — National Final** | Future Engineers | 🥇 **National Champion** → selected to represent 🇧🇩 |
-| **2026** | **WRO Open Championship Asia Pacific** · Hyderabad, 25–27 Sept | Future Engineers | 🔜 Racing |
+| **2026** | **WRO Bangladesh — National Final** | Future Engineers |  **National Champion**  selected to represent  |
+| **2026** | **WRO Open Championship Asia Pacific** · Hyderabad, 25–27 Sept | Future Engineers |  Racing |
 
-> 📣 [Official announcement of the national round](https://www.facebook.com/share/r/1JujdfQpYH/)
+>  [Official announcement of the national round](https://www.facebook.com/share/r/1JujdfQpYH/)
 
 ### The years before that
 
@@ -100,18 +100,18 @@ That circuit is where the habits came from: iterate fast, design your own PCB in
 <td width="50%"><img src="media/achievements/traction-2024-pathfinder.jpg" width="100%" alt="Traction 2024 BRAC"/></td>
 </tr>
 <tr>
-<td align="center"><sub><b>IGNITION 2026</b> · KUET National Mechanical Festival<br/>🥈 1st Runner-up, Line Follower</sub></td>
-<td align="center"><sub><b>Traction 2024</b> · BRAC University<br/>🥉 2nd Runner-up, Pathfinder</sub></td>
+<td align="center"><sub><b>IGNITION 2026</b> · KUET National Mechanical Festival<br/> 1st Runner-up, Line Follower</sub></td>
+<td align="center"><sub><b>Traction 2024</b> · BRAC University<br/> 2nd Runner-up, Pathfinder</sub></td>
 </tr>
 </table>
 
 | Year | Event | Segment | Result |
 |---|---|---|---|
-| 2026 | CYBERNAUTS · North South University | Robo Sumo | 🥇 Champion |
-| 2026 | IGNITION · KUET | Line Follower | 🥈 1st Runner-up |
-| 2025 | Accelerate · IEEE RAS, IUT | Line Follower | 🏅 Podium |
-| 2025 | IUT Techathon | Line Follower | 🥇 Champion |
-| 2024 | Traction · BRAC University | Pathfinder / LFR | 🥉 2nd Runner-up |
+| 2026 | CYBERNAUTS · North South University | Robo Sumo |  Champion |
+| 2026 | IGNITION · KUET | Line Follower |  1st Runner-up |
+| 2025 | Accelerate · IEEE RAS, IUT | Line Follower |  Podium |
+| 2025 | IUT Techathon | Line Follower |  Champion |
+| 2024 | Traction · BRAC University | Pathfinder / LFR |  2nd Runner-up |
 
 <p align="center">
   <img src="media/achievements/accelerate-2025.jpg" width="46%" alt="Accelerate 2025"/>
@@ -121,7 +121,7 @@ That circuit is where the habits came from: iterate fast, design your own PCB in
 
 ---
 
-## 🧭 Why "Blueprint"
+## Why "Blueprint"
 
 > *A dream without a plan is just a wish. An autonomous car without a blueprint is just guesswork.*
 
@@ -138,7 +138,7 @@ None of us could have built this alone. The electrical depth, the firmware, and 
 
 ---
 
-## 💡 Problem Statement & Engineering Objectives
+## Problem Statement & Engineering Objectives
 
 ### 1. The Challenge
 Autonomous miniature racing requires solving complex, coupled real-time problems under strict physical and optical constraints:
@@ -154,7 +154,7 @@ Autonomous miniature racing requires solving complex, coupled real-time problems
 
 ---
 
-## 🚙 Vehicle Specifications
+## Vehicle Specifications
 
 | Category | Parameter | Measured / Engineered Value | Rule Limit / Target | Notes |
 |---|---|---|---|---|
@@ -165,7 +165,7 @@ Autonomous miniature racing requires solving complex, coupled real-time problems
 | | Track Width ($W$) | **105 mm** (center-to-center) / **115 mm** (extreme) | — | 115 mm total outer width |
 | | Wheel Diameter | **46 mm** (Front) / **50 mm** (Rear) | — | 1.1° natural forward rake |
 | **Kinematics** | Steering Mechanism | **Parallelogram Tie-Bar** (Single Servo) | — | Replaced center-pivot to eliminate swept envelope growth |
-| | Steering Range | **±35°** at wheel knuckles | — | Actuated via MG996R metal-gear servo |
+| | Steering Range | **±35°** at wheel knuckles | — | Actuated via JX PS-1171MG digital metal-gear servo |
 | | Minimum Turning Radius | **157 mm** ($L / \tan 35^\circ$) | — | Centers inside standard 1000 mm driving lane |
 | **Powertrain** | Primary Motor | **25GA DC Gearmotor** (12V) | Max 1 motor | Rule 11.5 compliant |
 | | Reduction | **5:1 Spur Gear Final Drive** | — | High starting torque, eliminates stall cogging |
@@ -173,14 +173,14 @@ Autonomous miniature racing requires solving complex, coupled real-time problems
 | | Maximum Speed | **0.70 m/s** | — | Software throttled for predictable braking |
 | **Sensors** | 2D LiDAR Scanner | **Slamtec RPLIDAR C1 (360° DTOF)** | — | 12 m range, 5 kHz sampling, high ambient light immunity (Obstacle round) |
 | | Optical Camera | **160° FOV Wide-Angle Fisheye** | — | High-speed pillar color & centroid extraction (Obstacle round) |
-| | Distance Array | **4× VL53L0X Time-of-Flight (ToF)** | — | Equipped with custom 3D-printed optical collimators |
+| | Distance Array | **4× VL53L1X Time-of-Flight (ToF)** | — | Front and rear, on TCA9548A channels 1 and 2, with custom 3D-printed optical collimators |
 | | Ground Color Sensing | **TCS34725 RGB Sensor** | — | Downward-facing with isolated illumination hood |
-| | Inertial Measurement | **MPU6050 / SPI 6-DoF IMU** | — | 1 kHz internal sampling for heading integration |
+| | Inertial Measurement | **BNO085 (SPI, on-chip sensor fusion)** | — | 1 kHz internal sampling for heading integration |
 | | Odometry Resolution | **0.175 mm / count** | — | Quadrature optical/magnetic motor encoder |
 | **Compute** | Real-Time Master | **STM32F411CEU6 (Black Pill)** | — | ARM Cortex-M4 @ 100 MHz, Hardware FPU, Real-Time Loop |
 | | Perception & Mapping | **Raspberry Pi 5 (8GB)** | — | Quad-Core Cortex-A76 @ 2.4 GHz, concurrent Vision + LiDAR SLAM |
 
-### 📋 Rule Compliance Matrix
+### Rule Compliance Matrix
 
 - **Mechanical (Rules 11.3, 11.5, 11.13)**: Exactly four wheels, single steering actuator, single drive motor coupled via a fixed gear reduction to a single solid axle.
 - **RF & Telemetry (Rule 11.10)**: All wireless interfaces (Wi-Fi, Bluetooth) are disabled at kernel boot (`config.txt`) on the Raspberry Pi. Zero external communication during runs.
@@ -188,7 +188,7 @@ Autonomous miniature racing requires solving complex, coupled real-time problems
 
 ---
 
-## 📸 Visual Gallery & Media
+## Visual Gallery & Media
 
 ### 1. Vehicle Views (`v-photos/`)
 Detailed competition photographs conforming to WRO documentation rules:
@@ -216,7 +216,7 @@ Detailed competition photographs conforming to WRO documentation rules:
 
 ---
 
-## ⚡ System Architecture
+## System Architecture
 
 The robot employs a **dual-tier heterogeneous compute hierarchy**:
 
@@ -234,13 +234,13 @@ graph TD
         IMU["6-DoF IMU (Yaw Heading)"] -->|I2C / SPI| STM
         ENC["Encoder (Solid Axle)"] -->|Timer Quadrature| STM
         BTN["Start Pushbutton"] -->|GPIO EXTI| STM
-        MUX["PCA9548A I2C Mux (3.3V)"] <-->|I2C Master| STM
-        MUX --> TOF1["VL53L0X Front"]
-        MUX --> TOF2["VL53L0X Left (L90)"]
-        MUX --> TOF3["VL53L0X Right (R90)"]
+        MUX["TCA9548A I2C Mux (3.3V)"] <-->|I2C Master| STM
+        MUX --> TOF1["VL53L1X Front"]
+        MUX --> TOF2["VL53L1X Left (L90)"]
+        MUX --> TOF3["VL53L1X Right (R90)"]
         MUX --> COL["TCS34725 Floor Color"]
-        
-        STM -->|PWM 50Hz| SERVO["MG996R Steering Servo"]
+
+        STM -->|PWM 50Hz| SERVO["JX PS-1171MG Steering Servo"]
         STM -->|PWM + EN| BTS["BTS7960 H-Bridge Driver"] --> MOTOR["25GA Drive Motor"]
     end
 
@@ -265,7 +265,7 @@ A full physical wiring block diagram is illustrated below, mapping PCB pinouts, 
 
 ---
 
-## 🧭 Autonomous Navigation Strategy
+## Autonomous Navigation Strategy
 
 ### 1. Open Challenge (Deterministic Real-Time Firmware)
 In the Open Challenge, the vehicle runs **exclusively on the STM32F411**, operating on a zero-drift, state-driven control cycle:
@@ -276,7 +276,7 @@ In the Open Challenge, the vehicle runs **exclusively on the STM32F411**, operat
 4. **Surface Marker Detection**: Downward-facing TCS34725 color sensor identifies the high-contrast orange and blue floor lines.
 5. **Deterministic Direction Decoding**:
    - The first corner crossed has dual lines (Orange + Blue).
-   - The detection order (`Orange → Blue` vs `Blue → Orange`) resolves the randomized race direction (Rule 9.3) dynamically.
+   - The detection order (`Orange  Blue` vs `Blue  Orange`) resolves the randomized race direction (Rule 9.3) dynamically.
 6. **IMU-Terminated Turn Execution**:
    - The steering servo commands full ±35° lock.
    - **Crucial Design Rule**: The turn does *not* complete based on distance or time; it completes when integrated IMU yaw hits exactly 90.0°. Wheel slip and kinematic scrub cannot corrupt this threshold.
@@ -290,12 +290,12 @@ In the Open Challenge, the vehicle runs **exclusively on the STM32F411**, operat
 
 ---
 
-## 🔬 Key Engineering Findings
+## Key Engineering Findings
 
 Through rigorous physical validation, four primary engineering hypotheses were challenged and redesigned:
 
 ### 1. Floor IR Crosstalk & Sensor Collimation
-* **Problem**: The WRO mat is high-reflectance white vinyl (Rule 13.2), while perimeter walls are low-reflectance matte black (Rules 13.4, 13.6). Standard VL53L0X ToF sensors possess a 25° field of view without software-defined regions of interest. Chassis rake (1.1° nose-down) caused the sensors to trigger on the floor at 166 mm instead of detecting walls.
+* **Problem**: The WRO mat is high-reflectance white vinyl (Rule 13.2), while perimeter walls are low-reflectance matte black (Rules 13.4, 13.6). Standard VL53L1X ToF sensors possess a 25° field of view without software-defined regions of interest. Chassis rake (1.1° nose-down) caused the sensors to trigger on the floor at 166 mm instead of detecting walls.
 * **Solution**: Developed [`electrical/collimator.py`](electrical/collimator.py) to calculate optical snout baffles. 3D-printed narrow 2.5 × 10 × 20 mm slot collimators paired with +2.0° mechanical upward wedges pushed the first ground reflection threshold from 166 mm out to **870 mm**, completely clearing side walls at 442.5 mm.
 
 ### 2. Analytical Failure of Textbook Two-Arc Parallel Parking
@@ -314,17 +314,17 @@ Through rigorous physical validation, four primary engineering hypotheses were c
 
 ---
 
-## 🛠️ Electrical & PCB Design
+## Electrical & PCB Design
 
 To ensure resilience during high-vibration dynamic runs, the electronics follow strict avionics-style guidelines:
 
 - **Custom Dhaka-Milled PCBs**: Fabricated using a single-sided isolation milling process with conservative 0.5 mm trace/space constraints:
   - **Board A (Upper)**: Houses STM32F411, BTS7960 gate interface, IMU, hardware UART, and primary power distribution.
-  - **Board B (Lower)**: Dedicated 3.3V sensor aggregation plane containing the PCA9548A multiplexer and modular sensor headers.
+  - **Board B (Lower)**: Dedicated 3.3V sensor aggregation plane containing the TCA9548A multiplexer and modular sensor headers.
 - **Four Isolated Power Domains with Single Star Ground**:
   1. *Motor Rail*: Unregulated battery voltage routed via heavy-gauge copper directly to BTS7960 H-Bridge.
-  2. *Servo Rail (6.0V)*: Dedicated 3A buck regulator. Prevents the 2.5A instantaneous stall spikes of the MG996R from causing MCU brownout resets.
-  3. *Logic Rail (5.0V → 3.3V)*: Dedicated buck feeding STM32 and secondary low-dropout (LDO) regulator for sensors.
+  2. *Servo Rail (6.0V)*: Dedicated 3A buck regulator. Prevents the 2.5A instantaneous stall spikes of the JX PS-1171MG from causing MCU brownout resets.
+  3. *Logic Rail (5.0V  3.3V)*: Dedicated buck feeding STM32 and secondary low-dropout (LDO) regulator for sensors.
   4. *SBC & LiDAR Rail (5.0V/5.1V, 5A)*: Dedicated high-current regulator harness for the Raspberry Pi 5 (8GB) and RPLIDAR C1 (physically disconnected during Open round).
 - **Wiring & Interconnect Standards**:
   - **Zero jumper wires (DuPont) and zero breadboards** anywhere on the vehicle.
@@ -333,7 +333,7 @@ To ensure resilience during high-vibration dynamic runs, the electronics follow 
 
 ---
 
-## 💻 Software Setup & Reproduction
+## Software Setup and Reproduction
 
 ### 1. Kinematic & Optical Simulations (Python)
 The mechanical and electrical analytical models can be reproduced using standard Python scientific tooling:
@@ -370,54 +370,84 @@ python src/sim/park_feasibility.py --wheelbase 110 --plot
 - **Dependencies**: OpenCV 4.x (V4L2 backend), Slamtec RPLIDAR SDK, NumPy.
 - **Execution**:
   ```bash
-  cd src/vision
-  python3 main_obstacle_pipeline.py --config config.json
+  cd src/pi
+  python3 main.py
   ```
 
 ---
 
-## 📂 Repository Structure
+## Documentation
+
+| Page | What it covers |
+|---|---|
+| [docs/LOGIC.md](docs/LOGIC.md) | How the car thinks. The state machine, the lane-gap correction, pillar avoidance, the Pi stack. Written to be read without opening a single source file. |
+| [docs/CALIBRATION.md](docs/CALIBRATION.md) | The eight calibration steps. What rig you need, what to run, what number you should get, what to do when it looks wrong. |
+| [docs/ASSEMBLY.md](docs/ASSEMBLY.md) | Building one from scratch. Parts, printed components, boards, assembly order, flash, calibrate. |
+| [docs/TIMELINE.md](docs/TIMELINE.md) | The engineering log. What broke, when, and what we changed because of it. |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Every failure mode we have hit on this car and how it was fixed. |
+| [src/pi/README.md](src/pi/README.md) | Setting up and running the Raspberry Pi perception stack. |
+| [src/tools/calibration/README.md](src/tools/calibration/README.md) | The calibration sketches themselves. |
+
+---
+
+## Repository Structure
 
 ```plaintext
-├── BOM.md                       # Bill of Materials: components, part numbers, costs, and sourcing
-├── DECISIONS.md                 # Architectural Decision Records (ADRs) with dated rationale
-├── SPECSHEET.md                 # Comprehensive hardware specs, pinout tables, and calibrated limits
-├── LICENSE                      # Open-source MIT License
-├── README.md                    # Main documentation and system overview
-│
-├── electrical/                  # Schematics, PCB layouts, collimator solver, and wiring diagrams
-├── journal/                     # Chronological engineering logs and milestone post-mortems
-├── media/                       # Renderings, simulation output plots, and technical figures
-│   ├── banner.jpg               # Official Team Blueprint repository banner
-│   ├── electrical/              # Electrical simulation figures
-│   └── steering/                # Kinematic swept-envelope and parking plots
-├── models/                      # Parametric CAD models and 3D-printable STL/STEP files
-├── schemes/                     # System block diagrams and interconnect schematics
-├── src/
-│   ├── sim/                     # Python kinematics, Monte-Carlo slop, and swept-envelope simulations
-│   └── vision/                  # Raspberry Pi OpenCV detection scripts, config files, and calibrations
-├── t-photos/                    # Team documentation photos (official and informal)
-├── v-photos/                    # Vehicle close-up photographs from 6 primary views
-└── video/                       # Scored demonstration run footage and documentation links
+README.md                  this file
+BOM.md                     bill of materials, sourcing, cost, mass budget
+DECISIONS.md               architectural decision records, dated, with supersessions
+SPECSHEET.md               as-built geometry, pin maps, calibrated limits
+LICENSE                    MIT
+
+docs/
+  ASSEMBLY.md              build the car from scratch
+  CALIBRATION.md           the eight calibration steps, start to finish
+  LOGIC.md                 how the car thinks, in plain language
+  TIMELINE.md              engineering log - what broke and what changed
+  TROUBLESHOOTING.md       problems we have actually had, and the fixes
+
+src/
+  open_round/              STM32 firmware, Open Challenge
+  obstacle_round/          STM32 firmware, Obstacle Challenge
+  pi/                      Raspberry Pi perception - camera, lidar, fusion, dashboard
+  tools/calibration/       eight calibration sketches plus a menu-driven suite
+  tools/bench/             single-subsystem bench sketches
+  sim/                     steering and parking simulations
+
+electrical/                power architecture, pin map, collimator solver
+schemes/                   wiring and block diagrams
+models/                    CAD sources and printable STLs
+journal/                   day-by-day build log
+media/                     team photos, competition photos, simulation figures
+t-photos/                  team photos, per WRO rules
+v-photos/                  vehicle photos from six sides, per WRO rules
+video/                     links to the driving demonstration videos
+other/                     datasheets, calibration data, supporting material
 ```
 
 ---
 
-## 🏆 WRO Deliverables & Compliance Checklist
+## WRO Deliverables and Compliance Checklist
 
-In strict adherence to **WRO Future Engineers General Rules (Chapter 7 - Team Documentation)**:
+Against WRO Future Engineers General Rules 2026, chapter 7.
 
-- [x] **Repository Public Accessibility**: Hosted openly under the MIT License with complete revision history.
-- [x] **Vehicle Photos (`v-photos/`)**: 6 distinct angle captures on plain background (Front, Back, Left, Right, Top, Bottom).
-- [x] **Team Photos (`t-photos/`)**: Official team portrait and informal team photo.
-- [x] **Schematics & Diagrams (`schemes/`)**: Complete electrical wiring and power domain distribution.
-- [x] **CAD & 3D Printable Files (`models/`)**: Complete STL and STEP files of custom fabricated brackets and chassis.
-- [x] **Source Code (`src/`)**: Transparent, documented source code for both real-time microcontroller control and high-level perception.
-- [x] **Engineering Process Log (`journal/` & `DECISIONS.md`)**: Full record of design iterations, failures, and quantitative justifications.
+| Requirement | Status |
+|---|---|
+| Public repository, MIT licensed, full revision history | done |
+| README over 5000 characters in English | done |
+| Source code for every programmed component | done - `src/open_round/`, `src/obstacle_round/`, `src/pi/` |
+| Engineering process log | done - `docs/TIMELINE.md`, `DECISIONS.md`, `journal/` |
+| Electromechanical schematics | done - `schemes/` |
+| Driving demonstration video, one per challenge, 30 s minimum | done - `video/video.md` |
+| Vehicle photos, all six sides | outstanding - `v-photos/` |
+| Team photos, official and informal | outstanding - `t-photos/` |
+| CAD and printable files | outstanding - `models/` |
+| Supporting material | outstanding - `other/` |
 
----
+Nothing above is marked done unless the files are in the repository. Four rows
+are outstanding and are being shot and committed before the scoring deadline.
 
-## 👥 Team & Acknowledgments
+## Team & Acknowledgments
 
 ### Team Blueprint
 * **Samman Rahin Shanto** — Electrical System Design, Electronics & PCB Layout *(Islamic University of Technology - IUT)*
@@ -430,7 +460,7 @@ In strict adherence to **WRO Future Engineers General Rules (Chapter 7 - Team Do
 
 ---
 
-## 📜 License
+## License
 
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
 
