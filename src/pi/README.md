@@ -2,8 +2,8 @@
 
 Camera and lidar, fused, with a browser-based calibration dashboard.
 
-Architecture and reasoning: [`docs/LOGIC.md`](../../docs/LOGIC.md#the-pi-perception-stack).
-Colour tuning procedure: [`docs/CALIBRATION.md`](../../docs/CALIBRATION.md#pillar-colour-on-the-pi).
+Architecture and reasoning: [main README, section 5](../../README.md#the-pi-perception-stack).
+Colour tuning procedure: [main README, section 8](../../README.md#pillar-colour-on-the-pi).
 
 ## Files
 

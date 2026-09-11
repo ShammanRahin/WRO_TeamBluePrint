@@ -30,7 +30,7 @@ camera coverage. Key findings:
 
 ## LOCKED v1 geometry (now in SPECSHEET §3 + Fusion global parameters)
 track 120 · wheelbase 128 (R=128) · wheel_dia 40 · lock ±45° · L×W×H 175×138×95 ·
-~450 g · CG ~28 mm · camera mast ~90 mm. Blueprint: `media/car_blueprint.svg`.
+~450 g · CG ~28 mm · camera mast ~90 mm. Layout figures: `media/steering/`.
 
 ## Tooling note
 PyBullet could not be installed here (no prebuilt wheel, no MSVC C++ toolchain, no

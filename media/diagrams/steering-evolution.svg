@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 400" width="920" height="400" font-family="ui-sans-serif,-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
+  <rect width="920" height="400" fill="#FAFAF7"/>
+  <defs><marker id="s1" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2B2B28"/></marker>
+        <marker id="s1L" markerWidth="9" markerHeight="9" refX="1" refY="4.5" orient="auto"><path d="M9,0 L0,4.5 L9,9 z" fill="#2B2B28"/></marker></defs>
+  <text x="34" y="40" font-size="20" font-weight="700" fill="#2B2B28">Why the centre pivot was scrapped</text>
+  <text x="34" y="63" font-size="13.5" fill="#6B6B63">Simulation preferred it. The physical car disagreed, and the car wins.</text>
+
+  <!-- LEFT: centre pivot -->
+  <text x="70" y="108" font-size="14" font-weight="700" fill="#B4452F">CENTRE PIVOT — rejected</text>
+  <rect x="70" y="126" width="340" height="200" rx="8" fill="#FFFFFF" stroke="#E3E3DC"/>
+  <line x1="240" y1="150" x2="240" y2="306" stroke="#C9C9C0" stroke-width="1.3" stroke-dasharray="5 5"/>
+  <!-- straight axle (ghost) -->
+  <rect x="150" y="216" width="180" height="9" rx="4" fill="#C9C9C0"/>
+  <rect x="138" y="196" width="16" height="48" rx="4" fill="#C9C9C0"/>
+  <rect x="326" y="196" width="16" height="48" rx="4" fill="#C9C9C0"/>
+  <!-- rotated axle -->
+  <g transform="rotate(-20 240 221)">
+    <rect x="150" y="216" width="180" height="9" rx="4" fill="#B4452F"/>
+    <rect x="138" y="196" width="16" height="48" rx="4" fill="#B4452F"/>
+    <rect x="326" y="196" width="16" height="48" rx="4" fill="#B4452F"/>
+  </g>
+  <circle cx="240" cy="221" r="7" fill="#2B2B28"/>
+  <text x="252" y="216" font-size="11" fill="#6B6B63">single pivot</text>
+  <line x1="146" y1="290" x2="176" y2="290" stroke="#2B2B28" stroke-width="1.5" marker-start="url(#s1L)" marker-end="url(#s1)"/>
+  <text x="90" y="312" font-size="12.5" font-weight="700" fill="#B4452F">outer tyre sweeps ±30.1 mm fore/aft</text>
+  <text x="90" y="328" font-size="11.5" fill="#6B6B63">= 36 % of the 82.5 mm parking clearance, gone</text>
+
+  <!-- RIGHT: parallelogram -->
+  <text x="510" y="108" font-size="14" font-weight="700" fill="#2F7D4F">PARALLELOGRAM TIE-BAR — fitted</text>
+  <rect x="510" y="126" width="340" height="200" rx="8" fill="#FFFFFF" stroke="#E3E3DC"/>
+  <!-- fixed knuckle centres -->
+  <line x1="578" y1="221" x2="782" y2="221" stroke="#C9C9C0" stroke-width="1.3" stroke-dasharray="5 5"/>
+  <g transform="rotate(-20 578 221)"><rect x="570" y="197" width="16" height="48" rx="4" fill="#2F7D4F"/></g>
+  <g transform="rotate(-20 782 221)"><rect x="774" y="197" width="16" height="48" rx="4" fill="#2F7D4F"/></g>
+  <circle cx="578" cy="221" r="6" fill="#2B2B28"/>
+  <circle cx="782" cy="221" r="6" fill="#2B2B28"/>
+  <rect x="578" y="250" width="204" height="7" rx="3" fill="#2F7D4F"/>
+  <text x="618" y="274" font-size="11" fill="#6B6B63">tie bar — both knuckles, one servo</text>
+  <text x="530" y="312" font-size="12.5" font-weight="700" fill="#2F7D4F">knuckle centres stay put</text>
+  <text x="530" y="328" font-size="11.5" fill="#6B6B63">body envelope does not grow with steering angle</text>
+
+  <rect x="70" y="348" width="780" height="34" rx="6" fill="#F2F2EC" stroke="#E3E3DC"/>
+  <text x="86" y="370" font-size="12" fill="#2B2B28">Simulation said the centre pivot tolerated joint slop 3× better. It was built, driven, measured, and replaced. The steering encoder went with it — every manoeuvre ends on body yaw, not wheel angle.</text>
+</svg>

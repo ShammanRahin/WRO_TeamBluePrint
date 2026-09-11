@@ -1,7 +1,7 @@
 # ELECTRICAL — WRO Future Engineers 2026, Team Blueprint
 
 **Revised 2026-07-28.** Supersedes the 2026-07-26 revision.
-Pin-level wiring diagram: **`schemes/stm32_wiring.svg`** · Block diagram:
+Wiring diagram: **`schemes/wiring_block_diagram.png`** · Block diagram:
 `schemes/wiring_block_diagram.png` · Solvers: `electrical/collimator.py`,
 `src/sim/geometry_sweep.py` · Fab constraints: `electrical/DESIGN_RULES.md`
 

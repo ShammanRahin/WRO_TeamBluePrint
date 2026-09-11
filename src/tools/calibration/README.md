@@ -5,7 +5,7 @@ that runs all eight from one flash.
 
 The full procedure — what rig you need, what to expect, how to read the output,
 and what to do when it looks wrong — is in
-[`docs/CALIBRATION.md`](../../../docs/CALIBRATION.md). Read that first. These
+[section 8 of the main README](../../../README.md#8-calibration). Read that first. These
 files are the tools; that page is the method.
 
 | File | Step |
