@@ -1026,6 +1026,8 @@ distance number in this document depends on it.
 
 ### 1. Encoder ticks per wheel revolution
 
+
+<p align="center"><img src="media/diagrams/calibration/01-encoder-ticks.svg" alt="Histogram of 100 revolutions: a tight single peak versus a bimodal distribution from a slipping coupler" width="100%"/></p>
 **Gives you:** counts produced by one full turn of the drive wheel.
 
 **Why not read the datasheet:** because the datasheet describes the encoder, not
@@ -1051,6 +1053,8 @@ you collect another eighty samples of noise.
 
 ### 2. Ticks per centimetre
 
+
+<p align="center"><img src="media/diagrams/calibration/02-ticks-per-cm.svg" alt="Least-squares fit of encoder ticks against measured distance, with a residual panel" width="100%"/></p>
 **Gives you:** `TICKS_PER_CM`, currently **31.933**.
 
 **Why it takes two measurements.** A caliper across the wheel gives a first
@@ -1089,6 +1093,8 @@ consistent sighting bias — you are reading the tape at an angle.
 
 ### 3. Steering jerk
 
+
+<p align="center"><img src="media/diagrams/calibration/03-steering-jerk.svg" alt="Yaw jerk trace with and without slew limiting, and peak jerk against slew limit showing the knee" width="100%"/></p>
 **Gives you:** `SERVO_SLEW`, currently **2.5** degrees per control cycle.
 
 **What jerk is.** Position, velocity, acceleration, jerk — the third derivative.
@@ -1124,6 +1130,8 @@ sloppy and you are giving back more than the jerk reduction is worth.
 
 ### 4. True straight servo angle
 
+
+<p align="center"><img src="media/diagrams/calibration/04-true-straight.svg" alt="Mean heading drift against commanded servo angle, forming a V with a clear minimum" width="100%"/></p>
 **Gives you:** `SERVO_TRUE_STRAIGHT`.
 
 **Why it is not 90.** The servo's mechanical centre, which spline tooth the horn
@@ -1158,6 +1166,8 @@ again.
 
 ### 5. ToF floor signal threshold
 
+
+<p align="center"><img src="media/diagrams/calibration/05-tof-threshold.svg" alt="Signal rate for floor returns versus wall returns at seven distances, with the discard threshold" width="100%"/></p>
 **Gives you:** `SIGNAL_MIN_MCPS` (**4.0**) and `TOF_MAX_VALID_MM` (**1300**).
 
 **The problem.** The WRO mat is white vinyl and highly reflective. The walls are
@@ -1194,6 +1204,8 @@ took our first ground reflection from 166 mm out to 870 mm.
 
 ### 6. Ninety degree turns
 
+
+<p align="center"><img src="media/diagrams/calibration/06-turn-90.svg" alt="Final heading error histograms for left and right turns, balanced versus asymmetric" width="100%"/></p>
 **Gives you:** `TURN_KP`, `TURN_MAX_STEER`, `TURN_MIN_STEER`, `TURN_KV`,
 `TURN_STOP_DEG`, `TURN_MIN_PWM`, `TURN_MAX_PWM`.
 
@@ -1237,6 +1249,8 @@ laps, and 12 degrees is a wall.
 
 ### 7. Heading correction gain
 
+
+<p align="center"><img src="media/diagrams/calibration/07-heading-gain.svg" alt="RMS heading error against gain, and zero crossings against gain, as two separate plots" width="100%"/></p>
 **Gives you:** `HEAD_KP` (**2.0**), and confirmation that `HEAD_KD` and
 `HEAD_KI` stay at zero.
 
@@ -1278,6 +1292,8 @@ more than a clean run does.
 
 ### 8. Floor colour thresholds
 
+
+<p align="center"><img src="media/diagrams/calibration/08-floor-colour.svg" alt="Red against blue channel percentages for blue line, orange line and white mat, with the firmware decision regions shaded" width="100%"/></p>
 **Gives you:** the cut points that turn a TCS34725 reading into ORANGE, BLUE or
 NOTHING. Currently:
 
