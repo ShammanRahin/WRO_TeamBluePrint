@@ -26,29 +26,19 @@
 
 <a id="contents"></a>
 
-### Contents
+### Knowledge Index & Navigation
 
 </div>
 
-| | Section | What is in it |
-|---|---|---|
-| **1** | [The team](#1-the-team) | Who we are, what we have won, why the car is called Blueprint |
-| **2** | [The challenge](#2-the-challenge) | What Future Engineers asks for, and the problems that creates |
-| **3** | [The vehicle](#3-the-vehicle) | Full specification, photographs, rule compliance |
-| **4** | [System architecture](#4-system-architecture) | The two-tier split, power domains, wiring |
-| **5** | [How the car thinks](#5-how-the-car-thinks) | Every control decision in plain language — **start here** |
-| **6** | [Engineering findings](#6-engineering-findings) | Four things we got wrong, measured, and fixed |
-| **7** | [Build one from scratch](#7-build-one-from-scratch) | Parts, printing, boards, assembly order |
-| **8** | [Calibration](#8-calibration) | Eight steps, written for someone who has never done them |
-| **9** | [Software: build, flash, run](#9-software-build-flash-run) | Toolchains and commands for all three tiers |
-| **10** | [Engineering log](#10-engineering-log) | Dated record of what broke and what changed |
-| **11** | [Troubleshooting](#11-troubleshooting) | Every failure mode we have hit, and the fix |
-| **12** | [Repository map](#12-repository-map) | Where everything lives |
-| **13** | [WRO compliance](#13-wro-compliance) | Checked against the 2026 General Rules, chapter 7 |
-| **14** | [Reference documents](#14-reference-documents) | Spec sheet, decision records, bill of materials |
-| **15** | [Credits and licence](#15-credits-and-licence) | |
+> **Fast Track:** For a complete pass of the vehicle decision architecture without digging into raw code, jump directly to **[Section 5: How the car thinks](#5-how-the-car-thinks)**.
 
-> **Short on time?** Read [section 5](#5-how-the-car-thinks). It is the whole car in one pass, no source files required.
+| Domain | Section | Key Knowledge & Topics |
+|:---|:---|:---|
+| **System & Vehicle** | [1. The team](#1-the-team)<br>[2. The challenge](#2-the-challenge)<br>[3. The vehicle](#3-the-vehicle) | Team background, WRO Future Engineers constraints, as-built geometry, mass limits |
+| **Hardware & Electronics** | [4. System architecture](#4-system-architecture)<br>[7. Build one from scratch](#7-build-one-from-scratch)<br>[8. Calibration](#8-calibration) | Dual-tier STM32/Pi 5 split, power domains, mechanical fabrication, 8-step sensor calibration |
+| **Intelligence & Control** | [5. How the car thinks](#5-how-the-car-thinks)<br>[9. Software: build, flash, run](#9-software-build-flash-run)<br>[11. Troubleshooting](#11-troubleshooting) | Autonomous state machine, heading hold, obstacle avoidance, toolchains, fault recovery |
+| **Engineering Records** | [6. Engineering findings](#6-engineering-findings)<br>[10. Engineering log](#10-engineering-log)<br>[12. Repository map](#12-repository-map) | Scrapped designs, measured telemetry, dated test history, codebase layout |
+| **Standards & Reference** | [13. WRO compliance](#13-wro-compliance)<br>[14. Reference documents](#14-reference-documents)<br>[15. Credits and licence](#15-credits-and-licence) | Chapter 7 rule checklist, spec sheets, decision records, BOM, MIT license |
 
 ---
 
