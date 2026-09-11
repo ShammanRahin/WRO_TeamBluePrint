@@ -54,26 +54,39 @@
 
 ## 1. The team
 
-### Hi, we're Blueprint
+### 👋 Hi, we're Blueprint
 
-Three students. Three different universities. One very small car that has to drive itself around a track without anyone touching it.
+> **Three students. Three universities. One autonomous car brought to life over 2 AM calls and assembled wherever there was a working soldering iron.**
 
-We're from **IUT**, **MIST** and **NUB** — three campuses scattered across Bangladesh, which means most of this robot was designed over group calls at 2 AM and assembled in whatever room had a working soldering iron. In 2026 we won the **WRO Bangladesh National Final** in Future Engineers, and in September we're taking this thing to **Hyderabad** to race against Asia Pacific.
+We're from **IUT**, **MIST**, and **NUB** — three campuses scattered across Bangladesh. Because we're miles apart, this robot wasn't built in a single high-tech lab. It came together over late-night screenshares, sleepless debugging marathons, and shared dorm floors.
 
-Here's the thing you should know about how we work: **we don't guess.**
+It paid off:
+- 🏆 **National Champions** — Won the 2026 WRO Bangladesh National Final (*Future Engineers*).
+- 🌏 **Asia Pacific Championship** — Racing in Hyderabad, India this September.
 
-Every number in this repository was either calculated, simulated, or measured on a bench before it went into the car. When something didn't work, we didn't quietly delete it — we wrote down why it failed and left it in. Scroll down far enough and you'll find the steering system we built, tested, and then threw away; the parking manoeuvre that our own maths proved was impossible; and the sensor that kept detecting the floor instead of the wall.
+---
 
-That's not us being humble. It's the whole point. A design decision only means something if you can see what it beat.
+#### 💡 How We Work: *We Don't Guess.*
 
-**Start here if you're in a hurry:**
+Every number in this repository was calculated, simulated, or bench-measured before it ever touched the hardware.
 
-| Document | What's in it |
-|---|---|
-|  [`SPECSHEET.md`](SPECSHEET.md) | Every measured number on the car — geometry, pin maps, calibrated limits |
-|  [`DECISIONS.md`](DECISIONS.md) | Every choice we made, dated, with the data behind it and what it replaced |
-|  [`BOM.md`](BOM.md) | What we bought, what it cost, what we're still waiting on |
-|  [`journal/`](journal/) | The messy day-by-day version of the above |
+We also don't hide our failures. Dig into the docs and you'll find:
+- 🛠️ **A scrapped steering system** that looked great on paper but failed on the track.
+- 📐 **Impossible parking math** that our own kinematics proved couldn't clear the box.
+- 👁️ **A sensor that wouldn't stop staring at the floor** instead of the walls.
+
+We leave our mistakes in the open because **a design decision only matters if you can see what it beat.**
+
+---
+
+#### ⚡ Start Here
+
+| Document | What's inside |
+|:---|:---|
+| 📊 [`SPECSHEET.md`](SPECSHEET.md) | **The hard numbers** — exact geometry, pin maps, and calibrated limits. |
+| 🧠 [`DECISIONS.md`](DECISIONS.md) | **The engineering logic** — every choice, the data behind it, and what got replaced. |
+| 🧾 [`BOM.md`](BOM.md) | **What it takes to build** — what we bought, what it cost, and parts sourcing. |
+| 📔 [`journal/`](journal/) | **The build log** — the messy, unfiltered day-by-day reality of building this car. |
 
 ---
 
