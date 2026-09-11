@@ -50,20 +50,19 @@
 
 We're from **IUT**, **MIST**, and **NUB** — three campuses scattered across Bangladesh. Because we're miles apart, this robot wasn't built in a single high-tech lab. It came together over late-night screenshares, sleepless debugging marathons, and shared dorm floors.
 
-It paid off:
 - **National Champions** — Won the 2026 WRO Bangladesh National Final (*Future Engineers*).
 - **Asia Pacific Championship** — Racing in Hyderabad, India this September.
 
 ---
 
-#### How We Work: *We Don't Guess.*
+#### Our Rule: We Don't Guess
 
-Every number in this repository was calculated, simulated, or bench-measured before it ever touched the hardware.
+We named ourselves Blueprint because an autonomous vehicle without one is just guesswork. Every number in this repository was calculated, simulated, or bench-measured before it ever touched the hardware. If the math says a maneuver cannot work—like our textbook parallel parking that missed by 25.6 mm—we believe the math and redesign.
 
-We also don't hide our failures. Dig into the docs and you'll find:
-- **A scrapped steering system** that looked great on paper but failed on the track.
-- **Impossible parking math** that our own kinematics proved couldn't clear the box.
-- **A sensor that wouldn't stop staring at the floor** instead of the walls.
+We also don't hide our failures. Dig into the docs and you will find:
+- A scrapped steering system that looked great on paper but failed on the track.
+- Impossible parking math that our own kinematics proved couldn't clear the bay.
+- An ultrasonic sensor that wouldn't stop staring at the floor instead of the walls.
 
 We leave our mistakes in the open because **a design decision only matters if you can see what it beat.**
 
@@ -82,6 +81,8 @@ We leave our mistakes in the open because **a design decision only matters if yo
 
 ### Meet the three of us
 
+None of us could have built this alone. The electrical depth, firmware, and mechanical fabrication each came from a different campus:
+
 <table align="center">
 <tr>
 <td align="center" width="33%"><img src="media/team/samman.jpg" width="180" alt="Samman Rahin Shanto"/></td>
@@ -89,7 +90,7 @@ We leave our mistakes in the open because **a design decision only matters if yo
 <td align="center" width="33%"><img src="media/team/azmain.jpg" width="180" alt="MD. Azmain Shak Rubayed"/></td>
 </tr>
 <tr>
-<td align="center"><b>Samman Rahin Shanto</b><br/><sub>Team Lead</sub></td>
+<td align="center"><b>Samman Rahin Shanto</b><br/><sub>Team Lead &amp; Electrical</sub></td>
 <td align="center"><b>Syed Subeh-Sadik Sholok</b><br/><sub>Firmware &amp; Control</sub></td>
 <td align="center"><b>MD. Azmain Shak Rubayed</b><br/><sub>CAD &amp; Fabrication</sub></td>
 </tr>
@@ -100,13 +101,13 @@ We leave our mistakes in the open because **a design decision only matters if yo
 </tr>
 <tr>
 <td align="center"><sub>Power architecture, PCB layout, and the reason there isn't a single jumper wire on this car.</sub></td>
-<td align="center"><sub>Wrote everything the car decides in real time — heading hold, gyro-terminated turns, the failsafe that keeps it alive when the Pi dies.</sub></td>
-<td align="center"><sub>If a part on this robot wasn't bought, he drew it and printed it. Chassis, knuckles, tie-bar, camera mast.</sub></td>
+<td align="center"><sub>Wrote everything the car decides in real time — heading hold, gyro turns, and the failsafe when the Pi dies.</sub></td>
+<td align="center"><sub>Drew and printed every custom part: chassis plate, knuckles, tie-bar, and camera mast.</sub></td>
 </tr>
 <tr>
-<td align="center"><sub> <a href="mailto:sammanrahin.iut@gmail.com">sammanrahin.iut@gmail.com</a></sub></td>
-<td align="center"><sub> <a href="mailto:syedsholok.mist@gmail.com">syedsholok.mist@gmail.com</a></sub></td>
-<td align="center"><sub> <a href="mailto:azmiansheikh.nub@gmail.com">azmiansheikh.nub@gmail.com</a></sub></td>
+<td align="center"><sub><a href="mailto:sammanrahin.iut@gmail.com">sammanrahin.iut@gmail.com</a></sub></td>
+<td align="center"><sub><a href="mailto:syedsholok.mist@gmail.com">syedsholok.mist@gmail.com</a></sub></td>
+<td align="center"><sub><a href="mailto:azmiansheikh.nub@gmail.com">azmiansheikh.nub@gmail.com</a></sub></td>
 </tr>
 </table>
 
@@ -118,61 +119,33 @@ We leave our mistakes in the open because **a design decision only matters if yo
 
 | Season | Event | Category | Result |
 |---|---|---|---|
-| **2026** | **WRO Bangladesh — National Final** | Future Engineers |  **National Champion**  selected to represent  |
-| **2026** | **WRO Open Championship Asia Pacific** · Hyderabad, 25–27 Sept | Future Engineers |  Racing |
+| **2026** | **WRO Bangladesh — National Final** | Future Engineers | **National Champion** (Selected to represent Bangladesh) |
+| **2026** | **WRO Open Championship Asia Pacific** · Hyderabad, 25–27 Sept | Future Engineers | Racing |
 
->  [Official announcement of the national round](https://www.facebook.com/share/r/1JujdfQpYH/)
+> [Official announcement of the national round](https://www.facebook.com/share/r/1JujdfQpYH/)
 
-#### The years before that
+<details>
+<summary><b>View our 2-year background across 35+ national competitions</b></summary>
+<br>
 
-Blueprint didn't appear out of nowhere for WRO. Between us we've turned up to **35+ national robotics competitions** across Bangladesh — line followers, robo sumo, robo soccer, death race, battlebots. Most weekends of the last two years have been spent in a university sports hall somewhere, waiting for a heat.
-
-That circuit is where the habits came from: iterate fast, design your own PCB instead of waiting for one, and build hardware that can take a hit — because it will.
-
-<table>
-<tr>
-<td width="50%"><img src="media/achievements/ignition-2026-lfr.jpg" width="100%" alt="IGNITION 2026 KUET"/></td>
-<td width="50%"><img src="media/achievements/traction-2024-pathfinder.jpg" width="100%" alt="Traction 2024 BRAC"/></td>
-</tr>
-<tr>
-<td align="center"><sub><b>IGNITION 2026</b> · KUET National Mechanical Festival<br/> 1st Runner-up, Line Follower</sub></td>
-<td align="center"><sub><b>Traction 2024</b> · BRAC University<br/> 2nd Runner-up, Pathfinder</sub></td>
-</tr>
-</table>
+Blueprint did not appear out of nowhere for WRO. Between us, we have competed in 35+ national robotics events across Bangladesh (line followers, robo sumo, robo soccer, and battlebots). That circuit is where our habits came from: iterate fast, mill your own PCBs instead of waiting weeks for orders, and build hardware that can take an impact.
 
 | Year | Event | Segment | Result |
 |---|---|---|---|
-| 2026 | CYBERNAUTS · North South University | Robo Sumo |  Champion |
-| 2026 | IGNITION · KUET | Line Follower |  1st Runner-up |
-| 2025 | Accelerate · IEEE RAS, IUT | Line Follower |  Podium |
-| 2025 | IUT Techathon | Line Follower |  Champion |
-| 2024 | Traction · BRAC University | Pathfinder / LFR |  2nd Runner-up |
+| 2026 | CYBERNAUTS · North South University | Robo Sumo | Champion |
+| 2026 | IGNITION · KUET | Line Follower | 1st Runner-up |
+| 2025 | Accelerate · IEEE RAS, IUT | Line Follower | Podium |
+| 2025 | IUT Techathon | Line Follower | Champion |
+| 2024 | Traction · BRAC University | Pathfinder / LFR | 2nd Runner-up |
 
 <p align="center">
-  <img src="media/achievements/accelerate-2025.jpg" width="46%" alt="Accelerate 2025"/>
-  <img src="media/achievements/battle-damage.jpg" width="46%" alt="Post-run"/>
+  <img src="media/achievements/ignition-2026-lfr.jpg" width="46%" alt="IGNITION 2026 KUET"/>
+  <img src="media/achievements/traction-2024-pathfinder.jpg" width="46%" alt="Traction 2024 BRAC"/>
 </p>
 
-<p align="center"><sub>Left: Accelerate 2025 at IUT. Right: a robot that technically finished the run. Both count as data.</sub></p>
+<p align="center"><sub>Left: IGNITION 2026 at KUET. Right: Traction 2024 at BRAC University. Both count as data.</sub></p>
 
----
-
-### Why "Blueprint"
-
-> *A dream without a plan is just a wish. An autonomous car without a blueprint is just guesswork.*
-
-We picked the name as a rule for ourselves, not as a slogan. It means three things:
-
-**1. Do the maths before you print the part.**
-We simulate the kinematics and the swept volume first. When the maths says a manoeuvre can't work, we believe the maths. That's exactly what happened with parallel parking — the textbook two-arc reverse misses by 25.6 mm at our steering lock, and no amount of tuning was ever going to fix that. So we designed a different manoeuvre.
-
-**2. Write down why, not just what.**
-Every pivot goes into [`DECISIONS.md`](DECISIONS.md) with a date, the measurement that forced it, and what it supersedes. If you want to know why there's no steering encoder on this car, the answer is in there, with the reasoning we used at the time — including the part where we were wrong first.
-
-**3. Three universities, one car.**
-None of us could have built this alone. The electrical depth, the firmware, and the mechanical design each came from a different campus, and the interesting problems all lived in the seams between them.
-
----
+</details>
 
 ---
 
