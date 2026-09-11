@@ -1,62 +1,140 @@
 # Team Blueprint — WRO Future Engineers 2026
 
 <p align="center">
-  <img src="media/banner.jpg" alt="Team Blueprint - WRO Future Engineers 2026 Banner" width="100%"/>
+  <img src="media/banner.jpg" alt="Team Blueprint - WRO Future Engineers 2026" width="100%"/>
 </p>
 
 <div align="center">
 
+### 🇧🇩 National Champions — WRO Bangladesh 2026, Future Engineers
+### Heading to the WRO Open Championship Asia Pacific · Hyderabad, India · 25–27 September 2026
+
+[![National Champion](https://img.shields.io/badge/WRO%20Bangladesh%202026-National%20Champion-FFD700.svg)](#-how-we-got-here)
+[![WRO Category](https://img.shields.io/badge/WRO-Future%20Engineers%202026-brightgreen.svg)](#-wro-deliverables--compliance-checklist)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![WRO Category](https://img.shields.io/badge/WRO-Future%20Engineers%202026-brightgreen.svg)](#-rule-compliance-matrix)
-[![MCU](https://img.shields.io/badge/Master%20MCU-STM32F411CEU6-blue)](SPECSHEET.md)
-[![Compute SBC](https://img.shields.io/badge/Compute%20SBC-Raspberry%20Pi%205%20(8GB)-red)](src/vision/)
-[![LiDAR](https://img.shields.io/badge/LiDAR-Slamtec%20RPLIDAR%20C1%20(360°%20DTOF)-purple)](SPECSHEET.md)
-[![Design](https://img.shields.io/badge/Design%20Philosophy-Evidence--Driven-orange)](DECISIONS.md)
+[![MCU](https://img.shields.io/badge/Brain-STM32F411CEU6-blue)](SPECSHEET.md)
+[![Compute SBC](https://img.shields.io/badge/Eyes-Raspberry%20Pi%205%20(8GB)-red)](src/vision/)
+[![Design](https://img.shields.io/badge/Method-Evidence%20over%20Vibes-orange)](DECISIONS.md)
 
-**An autonomous self-driving miniature vehicle engineered from first principles by university students from Bangladesh for the World Robot Olympiad (WRO) Future Engineers 2026 competition.**
-
-[Overview](#-overview) • [Team Story](#-the-story-behind-team-blueprint) • [Specifications](#-vehicle-specifications) • [Visual Gallery](#-visual-gallery--media) • [Architecture](#-system-architecture) • [Control & Navigation](#-autonomous-navigation-strategy) • [Engineering Findings](#-key-engineering-findings) • [Software & Setup](#-software-setup--reproduction) • [Repo Structure](#-repository-structure) • [Team](#-team--acknowledgments)
+**[Hello](#-hi-were-blueprint)** • **[The Three of Us](#-meet-the-three-of-us)** • **[How We Got Here](#-how-we-got-here)** • **[The Name](#-why-blueprint)** • **[The Car](#-vehicle-specifications)** • **[How It Thinks](#-autonomous-navigation-strategy)** • **[What Broke](#-key-engineering-findings)** • **[Build It Yourself](#-software-setup--reproduction)**
 
 </div>
 
 ---
 
-## 🚙 Overview
+## 👋 Hi, we're Blueprint
 
-**Team Blueprint** represents a rigorous, evidence-driven paradigm in autonomous miniature robotics. Rather than relying on heuristic trial-and-error, every subsystem of this vehicle—from kinematic linkage geometry and optical time-of-flight physics to multi-rail power isolation—is backed by analytical calculations, numerical simulations, and empirical testing logs.
+Three students. Three different universities. One very small car that has to drive itself around a track without anyone touching it.
 
-This repository serves as the complete, transparent engineering logbook of the vehicle:
-- **Design rationale**: Not only *what* was designed, but the quantitative *why*.
-- **Empirical revisions**: Superseded designs and failed assumptions are retained with post-mortem analyses rather than wiped clean.
-- **Source of truth documents**:
-  - [`SPECSHEET.md`](SPECSHEET.md) — Comprehensive technical parameter limits, calibrated values, and pinouts.
-  - [`DECISIONS.md`](DECISIONS.md) — Chronological architectural decision records (ADRs) with dated supersession blocks.
-  - [`BOM.md`](BOM.md) — Sourcing, inventory status, lead times, and unit costs.
+We're from **IUT**, **MIST** and **NUB** — three campuses scattered across Bangladesh, which means most of this robot was designed over group calls at 2 AM and assembled in whatever room had a working soldering iron. In 2026 we won the **WRO Bangladesh National Final** in Future Engineers, and in September we're taking this thing to **Hyderabad** to race against Asia Pacific.
+
+Here's the thing you should know about how we work: **we don't guess.**
+
+Every number in this repository was either calculated, simulated, or measured on a bench before it went into the car. When something didn't work, we didn't quietly delete it — we wrote down why it failed and left it in. Scroll down far enough and you'll find the steering system we built, tested, and then threw away; the parking manoeuvre that our own maths proved was impossible; and the sensor that kept detecting the floor instead of the wall.
+
+That's not us being humble. It's the whole point. A design decision only means something if you can see what it beat.
+
+**Start here if you're in a hurry:**
+
+| Document | What's in it |
+|---|---|
+| 📐 [`SPECSHEET.md`](SPECSHEET.md) | Every measured number on the car — geometry, pin maps, calibrated limits |
+| 🧠 [`DECISIONS.md`](DECISIONS.md) | Every choice we made, dated, with the data behind it and what it replaced |
+| 🧾 [`BOM.md`](BOM.md) | What we bought, what it cost, what we're still waiting on |
+| 📓 [`journal/`](journal/) | The messy day-by-day version of the above |
 
 ---
 
-## 👥 Team Blueprint
+## 🧑‍🔧 Meet the three of us
 
-| Name | Role | Institution | Contact |
+<table align="center">
+<tr>
+<td align="center" width="33%"><img src="media/team/samman.jpg" width="180" alt="Samman Rahin Shanto"/></td>
+<td align="center" width="33%"><img src="media/team/sholok.jpg" width="180" alt="Syed Subeh-Sadik Sholok"/></td>
+<td align="center" width="33%"><img src="media/team/azmain.jpg" width="180" alt="MD. Azmain Shak Rubayed"/></td>
+</tr>
+<tr>
+<td align="center"><b>Samman Rahin Shanto</b><br/><sub>Team Lead</sub></td>
+<td align="center"><b>Syed Subeh-Sadik Sholok</b><br/><sub>Firmware &amp; Control</sub></td>
+<td align="center"><b>MD. Azmain Shak Rubayed</b><br/><sub>CAD &amp; Fabrication</sub></td>
+</tr>
+<tr>
+<td align="center"><sub>Islamic University of Technology</sub></td>
+<td align="center"><sub>Military Institute of Science &amp; Technology</sub></td>
+<td align="center"><sub>Northern University Bangladesh</sub></td>
+</tr>
+<tr>
+<td align="center"><sub>Power architecture, PCB layout, and the reason there isn't a single jumper wire on this car.</sub></td>
+<td align="center"><sub>Wrote everything the car decides in real time — heading hold, gyro-terminated turns, the failsafe that keeps it alive when the Pi dies.</sub></td>
+<td align="center"><sub>If a part on this robot wasn't bought, he drew it and printed it. Chassis, knuckles, tie-bar, camera mast.</sub></td>
+</tr>
+<tr>
+<td align="center"><sub>📧 <a href="mailto:sammanrahin.iut@gmail.com">sammanrahin.iut@gmail.com</a></sub></td>
+<td align="center"><sub>📧 <a href="mailto:syedsholok.mist@gmail.com">syedsholok.mist@gmail.com</a></sub></td>
+<td align="center"><sub>📧 <a href="mailto:azmiansheikh.nub@gmail.com">azmiansheikh.nub@gmail.com</a></sub></td>
+</tr>
+</table>
+
+---
+
+## 🏆 How we got here
+
+### The one that matters
+
+| Season | Event | Category | Result |
 |---|---|---|---|
-| **Samman Rahin Shanto** | Electrical System Lead, PCB Design & Power Architecture | Islamic University of Technology (IUT) | [sammanrahin.iut@gmail.com](mailto:sammanrahin.iut@gmail.com) |
-| **Syed Sholok** | Embedded Firmware (STM32), Real-Time Control & Kinematics | Military Institute of Science and Technology (MIST) | [syedsholok.mist@gmail.com](mailto:syedsholok.mist@gmail.com) |
-| **MD. Azmain Shak Rubayed** | Team Co-Lead, CAD Modeling, Mechanical Kinematics & Fabrication | Northern University Bangladesh (NUB) | [azmiansheikh.nub@gmail.com](mailto:azmiansheikh.nub@gmail.com) |
+| **2026** | **WRO Bangladesh — National Final** | Future Engineers | 🥇 **National Champion** → selected to represent 🇧🇩 |
+| **2026** | **WRO Open Championship Asia Pacific** · Hyderabad, 25–27 Sept | Future Engineers | 🔜 Racing |
+
+> 📣 [Official announcement of the national round](https://www.facebook.com/share/r/1JujdfQpYH/)
+
+### The years before that
+
+Blueprint didn't appear out of nowhere for WRO. Between us we've turned up to **35+ national robotics competitions** across Bangladesh — line followers, robo sumo, robo soccer, death race, battlebots. Most weekends of the last two years have been spent in a university sports hall somewhere, waiting for a heat.
+
+That circuit is where the habits came from: iterate fast, design your own PCB instead of waiting for one, and build hardware that can take a hit — because it will.
+
+<table>
+<tr>
+<td width="50%"><img src="media/achievements/ignition-2026-lfr.jpg" width="100%" alt="IGNITION 2026 KUET"/></td>
+<td width="50%"><img src="media/achievements/traction-2024-pathfinder.jpg" width="100%" alt="Traction 2024 BRAC"/></td>
+</tr>
+<tr>
+<td align="center"><sub><b>IGNITION 2026</b> · KUET National Mechanical Festival<br/>🥈 1st Runner-up, Line Follower</sub></td>
+<td align="center"><sub><b>Traction 2024</b> · BRAC University<br/>🥉 2nd Runner-up, Pathfinder</sub></td>
+</tr>
+</table>
+
+| Year | Event | Segment | Result |
+|---|---|---|---|
+| 2026 | CYBERNAUTS · North South University | Robo Sumo | 🥇 Champion |
+| 2026 | IGNITION · KUET | Line Follower | 🥈 1st Runner-up |
+| 2025 | Accelerate · IEEE RAS, IUT | Line Follower | 🏅 Podium |
+| 2025 | IUT Techathon | Line Follower | 🥇 Champion |
+| 2024 | Traction · BRAC University | Pathfinder / LFR | 🥉 2nd Runner-up |
+
+<p align="center">
+  <img src="media/achievements/accelerate-2025.jpg" width="46%" alt="Accelerate 2025"/>
+  <img src="media/achievements/battle-damage.jpg" width="46%" alt="Post-run"/>
+</p>
+<p align="center"><sub>Left: Accelerate 2025 at IUT. Right: a robot that technically finished the run. Both count as data.</sub></p>
 
 ---
 
-## 🌟 The Story Behind "Team Blueprint"
+## 🧭 Why "Blueprint"
 
-> *"A dream without a plan is just a wish; an autonomous vehicle without a blueprint is just guesswork."*
+> *A dream without a plan is just a wish. An autonomous car without a blueprint is just guesswork.*
 
-Our journey began in 2025 with **Durnibar_71**, where we entered WRO with raw passion, starting from scratch with limited resources. The spirit of **'71**—rooted in the indomitable willpower and resilience of the Bangladesh Liberation War—taught us that determination can overcome any scarcity. 
+We picked the name as a rule for ourselves, not as a slogan. It means three things:
 
-For 2026, we took that unstoppable spirit and evolved it into **Team Blueprint**. 
+**1. Do the maths before you print the part.**
+We simulate the kinematics and the swept volume first. When the maths says a manoeuvre can't work, we believe the maths. That's exactly what happened with parallel parking — the textbook two-arc reverse misses by 25.6 mm at our steering lock, and no amount of tuning was ever going to fix that. So we designed a different manoeuvre.
 
-Why **"Blueprint"**? Because true engineering maturity is the transition from **hope** to **evidence**:
-1. **First-Principles Design**: We do not assemble parts hoping they balance; we simulate kinematics and swept volumes before 3D-printing a single bracket.
-2. **Accountability Through ADRs**: Every architectural pivot is documented as an Architectural Decision Record in [`DECISIONS.md`](DECISIONS.md). When a design fails, we document the post-mortem so others can learn from it.
-3. **Inter-University Synergy**: Bringing together students across three of Bangladesh's premier engineering institutions (**IUT**, **MIST**, and **NUB**) to demonstrate world-class robotics craftsmanship on the global stage.
+**2. Write down why, not just what.**
+Every pivot goes into [`DECISIONS.md`](DECISIONS.md) with a date, the measurement that forced it, and what it supersedes. If you want to know why there's no steering encoder on this car, the answer is in there, with the reasoning we used at the time — including the part where we were wrong first.
+
+**3. Three universities, one car.**
+None of us could have built this alone. The electrical depth, the firmware, and the mechanical design each came from a different campus, and the interesting problems all lived in the seams between them.
 
 ---
 
