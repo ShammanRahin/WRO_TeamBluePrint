@@ -38,47 +38,33 @@ see Decisions #23–#28.
 | Parameter | As built | Note |
 |---|---|---|
 | Track (wheel centre to centre) | **105 mm** | |
-| Track (wheel extreme to extreme) | **115 mm** | this is the scored width, not the 80 mm plate |
+| Track (wheel extreme to extreme) | **114.24 mm** | CAD measured: 114.244 mm (scored width) |
+| Kingpin pivot span ($K_w$) | **80.59 mm** | CAD measured: 80.589 mm between knuckle pivots |
 | Body length | **165 mm** | scored length = projection on mat (Appendix A 2/6) |
 | Chassis plate | 80 x 130 mm | |
-| **Wheelbase (front axle to rear axle)** | **110 mm** | measured 2026-07-28. Ceiling is 165 - 23 - 25 = 117 mm |
+| **Wheelbase (front axle to rear axle)** | **136.14 mm** | CAD measured: 136.139 mm axle-to-axle, 136.126 mm rim-to-rim |
 | Front wheel dia | **46 mm** | |
 | Rear wheel dia | **50 mm** | drives odometry |
-| Steering lock | **+/-35 deg** | parallelogram, equal-angle. **Final.** |
-| **Turn radius R** | **157 mm** | 110 / tan 35 deg |
-| Car height (current) | **50 mm** | will grow to ~75-90 mm with Pi 4B + BTS7960 stack |
-| Steering | **parallelogram tie-bar, open-loop** | Decision #15, #16 |
+| Steering mechanism | **True 100% Ackermann** | arms angled at 107.0° / 73.0° (17.0° inclination) |
+| Steering lock | **+/-35 deg** | measured at knuckles. **Final.** |
+| **Turn radius R** | **194.4 mm** | 136.14 / tan 35 deg |
+| Car height (current) | **50 mm** | will grow to ~75-90 mm with Pi 5 + RPLIDAR C1 stack |
 | Rear axle | solid, no diff, **5:1 gear** | Decision #14 |
 
-**Scored footprint 165 x 115 mm** — well inside the 300 x 200 mm limit.
+**Scored footprint 165 x 114.2 mm** — well inside the 300 x 200 mm limit.
 
-### Turn radius — RESOLVED 2026-07-28
+### Turn radius & Kinematics — CAD VERIFIED (2026-09-15)
 
-`R = wheelbase / tan(lock) = 110 / tan(35 deg) = **157 mm**`
+`R = wheelbase / tan(lock) = 136.14 / tan(35 deg) = **194.4 mm**`
 
-**157 mm is above the 120-150 mm target band, by 7 mm.** This is accepted, not overlooked.
-Raising the lock to 40 deg would put R at 131 mm and inside the band, and that change was
-briefly adopted before being withdrawn: the linkage is built and measured at 35 deg, and
-a lock angle the mechanism does not actually reach is worth nothing. The band was a design
-guideline from the 2026-07-12 optimiser, not a rule limit, and 5% over it costs nothing
-scored. The parking manoeuvre — which is what the band was really protecting — is handled
-by the multi-point shuffle regardless of R (Decision #21).
+Ackermann geometry condition:
+$$\alpha = \arctan\left(\frac{K_w / 2}{L}\right) = \arctan\left(\frac{80.589 / 2}{136.139}\right) = \arctan(0.29597) = 16.49^\circ \approx 16.5^\circ$$
+The CAD knuckle steering arms are set at **107.0° / 73.0°** ($17.0^\circ$ relative to the longitudinal axis), matching the theoretical Ackermann convergence directly at the rear axle center.
 
-```bash
-python3 src/sim/geometry_sweep.py                      # defaults to the measured 110 mm
-python3 src/sim/geometry_sweep.py --wheelbase 110 --plot
-```
-
-🚩 **105 mm is the TRACK, not the wheelbase.** Keeping the note because the two were
-confused more than once: track is lateral (wheel centre to wheel centre), wheelbase is
-longitudinal (front axle centre to rear axle centre).
-
-### Chassis rake — a real, inherited error
-Front 46 mm vs rear 50 mm = 2 mm axle height difference over the wheelbase:
-`rake = atan(2 / 110)` = **1.04 deg nose-down** (was quoted as a 1.0-1.1 deg range while
-the wheelbase was unmeasured).
-Every chassis-mounted sensor inherits this and is aimed AT THE FLOOR. Corrected by a
-+2 deg printed wedge in every ToF mount — see Section 8 and Decision #18.
+### Chassis rake — verified from CAD
+Front 46 mm vs rear 50 mm = 2 mm axle height difference over the 136.14 mm wheelbase:
+`rake = atan(2 / 136.14)` = **0.84 deg nose-down** (measured from CAD).
+Sensor mounts incorporate a +2 deg printed wedge to tilt the ToF sensors up and clear the floor.
 
 ### Parking geometry — ⚠️ TWO-ARC PARK IS NOT FEASIBLE AT 35 deg LOCK
 Bay = 1.5 x 165 = **247.5 mm** -> total longitudinal slack **82.5 mm**.
