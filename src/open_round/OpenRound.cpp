@@ -4,32 +4,42 @@
 #include <Wire.h>
 #include <SparkFun_BNO08x_Arduino_Library.h>
 #include <Adafruit_TCS34725.h>
-#include <VL53L1X.h>
+#include <VL53L0X.h>
 
 // ============================================================
-// NON-BLOCKING BUILD  (no settle stops, continuous motion)
+// OPEN ROUND - NON-BLOCKING FIRMWARE (new hardware revision)
 //
-// loop() runs once per iteration at max speed: it services ALL sensors
-// (IMU, front + side ToF; colour on demand) each pass, then advances a
-// cooperative state machine. No blocking while-loops, no delay() in the
-// run path. The car flows turn -> shuffle -> realign -> straight.
+// FSM logic is unchanged from the working build: loop() services every
+// sensor once per pass at max speed, then advances a cooperative state
+// machine. No blocking while-loops, no delay() in the run path. The car
+// flows turn -> shuffle -> realign -> straight without stopping.
 //
-// TURN TRIGGER: colour line gates it, then the turn fires when EITHER
-// the front wall is close OR the respective-side wall goes invalid
-// (right ToF for clockwise, left for CCW - the inner wall that gives way
-// at a corner). The gate ensures we only look at a real corner.
+// WHAT CHANGED vs the old board
+//   motor      PB8/PB9  -> PA2 (RPWM) / PA3 (LPWM), no DRV_EN (hard-tied)
+//   encoder    TIM3 PA6/PA7 -> TIM5 PA0/PA1 (32-bit), PA6/PA7 now SPI
+//   IMU SPI    PB5/PB4/PB3 -> PA7/PA6/PA5, CS PA4, INT PB0, RST PB1
+//   I2C        PB7/PB6 (unchanged), TCA9548 hardware reset added on PB8
+//   front ToF  VL53L1X CH4 -> VL53L0X CH3
+//   colour     auto-scan -> fixed CH4, new thresholds
+//   side ToF   REMOVED - not on this build
+//   servo      centre 69 -> 71, travel 5..115 -> 1..150
+//   ticks/cm   31.933 -> 14.853 (2x motor, new gearing)
+//   speeds     straight-line PWM halved to match the old ground speed
+//   start      button PB15 not wired -> fixed 5 s countdown
+//
+// TURN TRIGGER: with no side ToF the corner is confirmed by the colour
+// line gate plus the front wall closing to FRONT_TURN_MM. A distance
+// backstop fires the turn if the front sensor never confirms.
 //
 // Distance bookkeeping: the encoder is zeroed only at START and at each
 // TURN COMPLETION, so it measures "distance since the last turn" through
 // the lane correction; A, L and the final straight share that reference.
 // ============================================================
 
-#define TCA_ADDR 0x70
-
 enum BlockColor { COLOR_NONE, COLOR_ORANGE, COLOR_BLUE };
 
 enum RobotState {
-  STATE_INIT,
+  STATE_WAIT_START,
   STATE_DRIVE_TO_CORNER,
   STATE_TURNING,
   STATE_LANE_CORRECT,
@@ -40,42 +50,54 @@ enum RobotState {
 // ============================================================
 // HARDWARE PINS & OBJECTS
 // ============================================================
-const int RPWM_PIN   = PB9;
-const int LPWM_PIN   = PB8;
-const int DRV_EN_PIN = PB1;
-const int SERVO_PIN  = PA8;
+const int MOT_RPWM_PIN = PA2;     // TIM2_CH3 (TIM5 is the encoder, no clash)
+const int MOT_LPWM_PIN = PA3;     // TIM2_CH4
+const int SERVO_PIN    = PA8;
 
-const int IMU_CS_PIN  = PB0;
-const int IMU_INT_PIN = PB13;
-const int IMU_RST_PIN = PB14;
+const int IMU_CS_PIN  = PA4;
+const int IMU_INT_PIN = PB0;
+const int IMU_RST_PIN = PB1;
 
-const float TICKS_PER_CM        = 31.933;
-const float SERVO_TRUE_STRAIGHT = 69.0;
-const float SERVO_MAX_LEFT      = 5.0;
-const float SERVO_MAX_RIGHT     = 115.0;
-const int   BASE_SPEED          = 150;
+const int LED1_PIN = PB12;        // blinks during countdown, solid while running
+const int LED2_PIN = PB13;        // lit while ORANGE is under the sensor
+const int LED3_PIN = PB14;        // lit while BLUE is under the sensor
+                                  // all three solid = FINISHED
+const int BTN_START_PIN = PB15;   // not wired yet - see START_DELAY_MS
 
-SPIClass SPI_IMU(PB5, PB4, PB3);
+#define I2C_SCL     PB6
+#define I2C_SDA     PB7
+#define TCA_RST_PIN PB8
+#define TCA_ADDR    0x70
+#define TOF_CH      3             // front VL53L0X
+#define TCS_CH      4             // TCS34725
+
+// ---- calibration ----
+const float TICKS_PER_CM        = 14.853;   // 248.8 ticks/rev / (5.2 cm * PI)
+const float SERVO_TRUE_STRAIGHT = 71.0;
+const float SERVO_MAX_LEFT      = 1.0;
+const float SERVO_MAX_RIGHT     = 150.0;
+
+// ---- speeds: halved from the old build because the motor is 2x RPM ----
+const int BASE_SPEED      = 70;   // was 150
+const int CORRECTION_PWM  = 55;   // was 70; shuffle speed
+
+const unsigned long START_DELAY_MS = 5000;
+
+SPIClass SPI_IMU(PA7, PA6, PA5);  // MOSI, MISO, SCLK
 Servo steeringServo;
 BNO08x myIMU;
 Adafruit_TCS34725 tcs = Adafruit_TCS34725(TCS34725_INTEGRATIONTIME_2_4MS, TCS34725_GAIN_16X);
+VL53L0X lox;
 
-bool    tcsConnected     = false;
-uint8_t tcsChannel       = 0;
-float   initialYawOffset = 0.0;
+bool  tcsOk = false;
+bool  tofOk = false;
+float initialYawOffset = 0.0;
 
-// ToF (VL53L1X) on the mux:  CH1 = LEFT, CH3 = RIGHT, CH4 = FRONT
-const uint8_t CH_LEFT  = 1;
-const uint8_t CH_RIGHT = 3;
-const uint8_t CH_FRONT = 4;
-VL53L1X  tofL, tofR, tofF;
-bool     tofLok = false, tofRok = false, tofFok = false;
-uint16_t tofLeft = 9999, tofRight = 9999, tofFront = 9999;
-bool     tofLeftValid = false, tofRightValid = false, tofFrontValid = false;
-const uint16_t TOF_MAX_VALID_MM = 1300;
-const float    SIGNAL_MIN_MCPS  = 4.0;
+// ---- front ToF state ----
+uint16_t tofFront = 9999;
+bool     tofFrontValid = false;
+const uint16_t TOF_MAX_VALID_MM = 1200;   // VL53L0X practical ceiling
 const uint16_t FRONT_TURN_MM    = 700;
-const unsigned long SIDE_INVALID_MS = 40;   // watched-side invalid this long = wall gave way
 
 // ============================================================
 // RUN CONSTANTS
@@ -83,6 +105,7 @@ const unsigned long SIDE_INVALID_MS = 40;   // watched-side invalid this long = 
 const int   TARGET_CORNERS    = 12;
 const int   FINAL_STRAIGHT_CM = 100;
 const float SEARCH_SAFETY_CM  = 400.0;
+const float GATE_TO_TURN_MAX_CM = 150.0;  // backstop: turn even if front ToF never confirms
 
 float firstSegmentCm      = 0.0;
 float fullStartStraightCm = 0.0;
@@ -94,20 +117,19 @@ float finalDistanceCm     = FINAL_STRAIGHT_CM;
 // ============================================================
 const float GAP_THRESHOLD_CM       = 20.0;
 const float GAP_DEADBAND_CM        =  2.0;
-const float K_LAT_DEG_PER_CM       =  4;
+const float K_LAT_DEG_PER_CM       =  4.0;
 const float MAX_LAT_OFFSET_DEG     = 30.0;
 const float CORRECTION_DISTANCE_CM = 25.0;
-const float POST_CORNER_LOCKOUT_CM = 50;
+const float POST_CORNER_LOCKOUT_CM = 50.0;
 const int   CORRECTION_SIGN        =   1;
-const int   CORRECTION_PWM         =   70;
 const float REALIGN_SAFETY_CM      = 80.0;
 
 // ============================================================
 // FSM DATA
 // ============================================================
-RobotState currentState = STATE_INIT;
-bool          entered   = false;
-unsigned long phaseT0   = 0;
+RobotState    currentState = STATE_WAIT_START;
+bool          entered = false;
+unsigned long phaseT0 = 0;
 
 BlockColor lockedColor   = COLOR_NONE;
 bool       clockwiseMode = true;
@@ -124,12 +146,15 @@ bool       gapMeasured      = false;
 float gapRefCm  = GAP_THRESHOLD_CM;
 bool  gapRefSet = false;
 
-// cached sensor readings, refreshed every loop
+// cached IMU, refreshed every loop
 bool          gImuFresh = false;
 float         gHeading  = 0.0;
 float         gYawRate  = 0.0;
 float         gPrevH    = 0.0;
 unsigned long gPrevHT   = 0;
+
+// cached colour, refreshed every loop - drives the status LEDs and the FSM
+BlockColor gRawColor = COLOR_NONE;
 
 // ============================================================
 // HELPERS
@@ -147,20 +172,29 @@ void tcaselect(uint8_t channel) {
   Wire.endTransmission();
 }
 
+void resetTCA() {
+  pinMode(TCA_RST_PIN, OUTPUT);
+  digitalWrite(TCA_RST_PIN, LOW);    // active LOW
+  delay(10);
+  digitalWrite(TCA_RST_PIN, HIGH);
+  delay(10);
+}
+
 void setMotorSpeed(int speed) {
   speed = constrain(speed, -255, 255);
-  if (speed > 0)      { analogWrite(RPWM_PIN, speed); analogWrite(LPWM_PIN, 0); }
-  else if (speed < 0) { analogWrite(RPWM_PIN, 0);     analogWrite(LPWM_PIN, -speed); }
-  else                { analogWrite(RPWM_PIN, 0);     analogWrite(LPWM_PIN, 0); }
+  if (speed > 0)      { analogWrite(MOT_RPWM_PIN, speed); analogWrite(MOT_LPWM_PIN, 0); }
+  else if (speed < 0) { analogWrite(MOT_RPWM_PIN, 0);     analogWrite(MOT_LPWM_PIN, -speed); }
+  else                { analogWrite(MOT_RPWM_PIN, 0);     analogWrite(MOT_LPWM_PIN, 0); }
 }
 
 void setServoAngle(float angleDeg) {
-  angleDeg = constrain(angleDeg, 5.0, 115.0);
+  angleDeg = constrain(angleDeg, SERVO_MAX_LEFT, SERVO_MAX_RIGHT);
   steeringServo.writeMicroseconds((int)((angleDeg / 180.0) * 1000.0) + 1000);
 }
 
-void zeroEncoder() { TIM3->CNT = 0; }
-long readEncoder() { return (int16_t)TIM3->CNT; }
+// ---- TIM5 encoder (32-bit counter on PA0/PA1) ----
+void zeroEncoder() { TIM5->CNT = 0; }
+long readEncoder() { return (int32_t)TIM5->CNT; }
 long absEnc(long v) { return v < 0 ? -v : v; }
 
 // ---- IMU ----
@@ -189,24 +223,24 @@ void zeroYaw() {   // startup-only blocking zero (car not running yet)
   Serial.println(F("ERROR: no IMU event to zero!"));
 }
 
-// ---- colour (direct register read, NO delay) ----
+// ---- colour: direct register read on CH4, NO delay ----
 void readColor(uint16_t &r, uint16_t &g, uint16_t &b, uint16_t &c) {
-  if (!tcsConnected) { r = 0; g = 0; b = 0; c = 0; return; }
-  tcaselect(tcsChannel);
+  if (!tcsOk) { r = 0; g = 0; b = 0; c = 0; return; }
+  tcaselect(TCS_CH);
   Wire.beginTransmission(0x29);
   Wire.write(0x80 | 0x20 | 0x14);      // command | auto-increment | CDATAL
   Wire.endTransmission();
   Wire.requestFrom((uint8_t)0x29, (uint8_t)8);
   if (Wire.available() < 8) { r = 0; g = 0; b = 0; c = 0; return; }
-  c  =  (uint16_t)Wire.read();  c |= (uint16_t)Wire.read() << 8;
-  r  =  (uint16_t)Wire.read();  r |= (uint16_t)Wire.read() << 8;
-  g  =  (uint16_t)Wire.read();  g |= (uint16_t)Wire.read() << 8;
-  b  =  (uint16_t)Wire.read();  b |= (uint16_t)Wire.read() << 8;
+  c  = (uint16_t)Wire.read();  c |= (uint16_t)Wire.read() << 8;
+  r  = (uint16_t)Wire.read();  r |= (uint16_t)Wire.read() << 8;
+  g  = (uint16_t)Wire.read();  g |= (uint16_t)Wire.read() << 8;
+  b  = (uint16_t)Wire.read();  b |= (uint16_t)Wire.read() << 8;
 }
 
 const unsigned long COLOR_CONFIRM_MS = 6;
-BlockColor    pendingColor  = COLOR_NONE;
-unsigned long pendingStart  = 0;
+BlockColor    pendingColor = COLOR_NONE;
+unsigned long pendingStart = 0;
 
 void resetColorDetector() { pendingColor = COLOR_NONE; pendingStart = 0; }
 
@@ -216,36 +250,40 @@ BlockColor otherColor(BlockColor c) {
   return COLOR_NONE;
 }
 
-BlockColor detectColor(BlockColor wantColor) {
+// Raw classification, thresholds from the bench test sketch.
+// Run once per loop by serviceSensors() and cached in gRawColor.
+BlockColor classifyColor() {
   uint16_t r, g, b, c;
   readColor(r, g, b, c);
-  BlockColor rawColor = COLOR_NONE;
-  float totalLight = r + g + b;
-  if (totalLight > 0) {
-    float pR = ((float)r / totalLight) * 100.0;
-    float pB = ((float)b / totalLight) * 100.0;
-    if (pB > 36.0 && pR < 24.0)      rawColor = COLOR_BLUE;
-    else if (pR > 35.0 && pB < 27.0) rawColor = COLOR_ORANGE;
-  }
+  float total = (float)r + (float)g + (float)b;
+  if (total < 100.0f) return COLOR_NONE;       // below this it is dark / no mat
+  float pR = (r / total) * 100.0f;
+  float pB = (b / total) * 100.0f;
+  if (pB > 36.0f && pR < 28.0f) return COLOR_BLUE;
+  if (pR > 36.0f && pB < 28.0f) return COLOR_ORANGE;
+  return COLOR_NONE;
+}
+
+// Debounced, optionally filtered to one colour. Reads this loop's cached value.
+BlockColor detectColor(BlockColor wantColor) {
+  BlockColor rawColor = gRawColor;
   if (wantColor != COLOR_NONE && rawColor != wantColor) rawColor = COLOR_NONE;
 
-  if (rawColor == COLOR_NONE) { resetColorDetector(); return COLOR_NONE; }
+  if (rawColor == COLOR_NONE)   { resetColorDetector(); return COLOR_NONE; }
   if (rawColor != pendingColor) { pendingColor = rawColor; pendingStart = millis(); return COLOR_NONE; }
   if (millis() - pendingStart >= COLOR_CONFIRM_MS) { resetColorDetector(); return rawColor; }
   return COLOR_NONE;
 }
 
-// ---- ToF (non-blocking, signal-filtered) ----
-void serviceOneToF(VL53L1X &s, bool present, uint8_t ch, uint16_t &mm, bool &valid) {
-  if (!present) { valid = false; return; }
-  tcaselect(ch);
-  if (s.dataReady()) {
-    uint16_t d = s.read(false);
-    bool ok = (s.ranging_data.range_status == VL53L1X::RangeValid) &&
-              (s.ranging_data.peak_signal_count_rate_MCPS >= SIGNAL_MIN_MCPS) &&
-              (d > 0) && (d < TOF_MAX_VALID_MM);
-    valid = ok;
-    if (ok) mm = d;
+// ---- front ToF: poll the interrupt flag, never block ----
+void serviceFrontToF() {
+  if (!tofOk) { tofFrontValid = false; return; }
+  tcaselect(TOF_CH);
+  if (lox.readReg(VL53L0X::RESULT_INTERRUPT_STATUS) & 0x07) {
+    uint16_t d = lox.readReg16Bit(VL53L0X::RESULT_RANGE_STATUS + 10);
+    lox.writeReg(VL53L0X::SYSTEM_INTERRUPT_CLEAR, 0x01);
+    tofFrontValid = (d > 0 && d < TOF_MAX_VALID_MM);
+    if (tofFrontValid) tofFront = d;
   }
 }
 
@@ -263,79 +301,84 @@ void serviceSensors() {
     gPrevH = h; gPrevHT = now;
     gHeading = h;
   }
-  serviceOneToF(tofF, tofFok, CH_FRONT, tofFront, tofFrontValid);
-  serviceOneToF(tofL, tofLok, CH_LEFT,  tofLeft,  tofLeftValid);
-  serviceOneToF(tofR, tofRok, CH_RIGHT, tofRight, tofRightValid);
+  serviceFrontToF();
+
+  // one colour read per loop, shared by the FSM and the LEDs
+  gRawColor = classifyColor();
+  if (currentState != STATE_FINISHED) {
+    digitalWrite(LED2_PIN, gRawColor == COLOR_ORANGE ? HIGH : LOW);
+    digitalWrite(LED3_PIN, gRawColor == COLOR_BLUE   ? HIGH : LOW);
+  }
 }
 
 // ============================================================
 // SYSTEM INITIALIZATION
 // ============================================================
-void initOneToF(VL53L1X &s, bool &ok, uint8_t ch, const __FlashStringHelper *name) {
-  tcaselect(ch);
-  s.setBus(&Wire);
-  s.setTimeout(100);
-  ok = s.init();
-  if (ok) {
-    s.setDistanceMode(VL53L1X::Short);
-    s.setMeasurementTimingBudget(50000);
-    s.startContinuous(50);
-  }
-  Serial.print(name); Serial.println(ok ? F(" ready") : F(" FAILED"));
-}
-
 void initHardware() {
-  pinMode(RPWM_PIN, OUTPUT);
-  pinMode(LPWM_PIN, OUTPUT);
-  pinMode(DRV_EN_PIN, OUTPUT);
-  digitalWrite(DRV_EN_PIN, HIGH);
-  setMotorSpeed(0);
+  pinMode(MOT_RPWM_PIN, OUTPUT);
+  pinMode(MOT_LPWM_PIN, OUTPUT);
+  setMotorSpeed(0);                 // BTS7960 ENs are hard-tied on the carrier
+
+  pinMode(LED1_PIN, OUTPUT);
+  pinMode(LED2_PIN, OUTPUT);
+  pinMode(LED3_PIN, OUTPUT);
+  pinMode(BTN_START_PIN, INPUT_PULLUP);   // reserved, not read yet
+  digitalWrite(LED1_PIN, LOW);
+  digitalWrite(LED2_PIN, LOW);
+  digitalWrite(LED3_PIN, LOW);
 
   steeringServo.attach(SERVO_PIN, 1000, 2000);
   setServoAngle(SERVO_TRUE_STRAIGHT);
 
+  // ---- TIM5 encoder on PA0 / PA1 (AF2) ----
   __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_TIM3_CLK_ENABLE();
+  __HAL_RCC_TIM5_CLK_ENABLE();
   GPIO_InitTypeDef GPIO_InitStruct = {0};
-  GPIO_InitStruct.Pin       = GPIO_PIN_6 | GPIO_PIN_7;
+  GPIO_InitStruct.Pin       = GPIO_PIN_0 | GPIO_PIN_1;
   GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
   GPIO_InitStruct.Pull      = GPIO_PULLUP;
   GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
+  GPIO_InitStruct.Alternate = GPIO_AF2_TIM5;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   TIM_Encoder_InitTypeDef sConfig = {0};
-  static TIM_HandleTypeDef htim3 = {0};
-  htim3.Instance         = TIM3;
-  htim3.Init.Prescaler   = 0;
-  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period      = 65535;
+  static TIM_HandleTypeDef htim5 = {0};
+  htim5.Instance         = TIM5;
+  htim5.Init.Prescaler   = 0;
+  htim5.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim5.Init.Period      = 0xFFFFFFFF;     // 32-bit counter
   sConfig.EncoderMode  = TIM_ENCODERMODE_TI12;
   sConfig.IC1Polarity  = TIM_ICPOLARITY_RISING;
   sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC2Polarity  = TIM_ICPOLARITY_RISING;
   sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
-  HAL_TIM_Encoder_Init(&htim3, &sConfig);
-  HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
+  HAL_TIM_Encoder_Init(&htim5, &sConfig);
+  HAL_TIM_Encoder_Start(&htim5, TIM_CHANNEL_ALL);
 
-  Wire.setSDA(PB7);
-  Wire.setSCL(PB6);
+  // ---- I2C bus + mux ----
+  resetTCA();
+  Wire.setSCL(I2C_SCL);
+  Wire.setSDA(I2C_SDA);
   Wire.begin();
   Wire.setClock(400000);
   delay(100);
 
-  for (uint8_t i = 0; i < 8; i++) {
-    tcaselect(i);
-    delay(10);
-    if (tcs.begin()) { tcsConnected = true; tcsChannel = i;
-      Serial.print(F("TCS34725 on TCA channel ")); Serial.println(i); break; }
+  tcaselect(TOF_CH);
+  lox.setBus(&Wire);
+  lox.setTimeout(100);
+  tofOk = lox.init();
+  if (tofOk) {
+    lox.setMeasurementTimingBudget(30000);
+    lox.startContinuous(0);
   }
-  if (!tcsConnected) Serial.println(F("WARNING: TCS34725 not detected!"));
+  Serial.println(tofOk ? F("ToF FRONT (CH3): READY") : F("ToF FRONT (CH3): FAILED"));
 
-  initOneToF(tofL, tofLok, CH_LEFT,  F("ToF LEFT  (CH1)"));
-  initOneToF(tofR, tofRok, CH_RIGHT, F("ToF RIGHT (CH3)"));
-  initOneToF(tofF, tofFok, CH_FRONT, F("ToF FRONT (CH4)"));
+  tcaselect(TCS_CH);
+  delay(10);
+  tcsOk = tcs.begin();
+  Serial.println(tcsOk ? F("Colour (CH4): READY") : F("Colour (CH4): FAILED"));
 
+  // ---- IMU over SPI1 ----
   SPI_IMU.begin();
   if (myIMU.beginSPI(IMU_CS_PIN, IMU_INT_PIN, IMU_RST_PIN, 3000000, SPI_IMU)) {
     delay(500);
@@ -343,11 +386,13 @@ void initHardware() {
     delay(100);
     myIMU.getSensorEvent();
     zeroYaw();
+  } else {
+    Serial.println(F("ERROR: IMU not found!"));
   }
 }
 
 // ============================================================
-// HEADING PID  (Kp=2, cached sensor data, acts only on fresh sample)
+// HEADING PID  (cached sensor data, acts only on a fresh sample)
 // ============================================================
 const float HEAD_KP        = 2.0;
 const float HEAD_KD        = 0.0;
@@ -389,7 +434,8 @@ void updateHeadingPid(float heading) {
 }
 
 // ============================================================
-// EASED TURN LAW  (shared by corner turns and realign - NO settle)
+// EASED TURN LAW - verbatim from the tuned turning90 sketch.
+// Already validated on the 2x motor, so these PWMs are NOT halved.
 // ============================================================
 const float TURN_KP        = 2.5;
 const float TURN_MAX_STEER = 55.0;
@@ -426,17 +472,16 @@ void goState(RobotState s) { currentState = s; entered = false; }
 BlockColor dcWantFirst;
 bool       dcFirstTurn;
 bool       dcColorArmed;
-long       dcBaseTicks;      // encoder at this straight's start (local distance)
+long       dcBaseTicks;       // encoder at this straight's start
 long       dcLockoutTicks;
 long       dcSafetyTicks;
-unsigned long sideInvalidStart = 0;   // when the watched side first read invalid
 
 float      turnTarget;
 float      turnAmount;
 BlockColor turnPartner;
 bool       turnGotSecond;
 
-uint8_t    lcPhase;          // 2 = shuffle, 4 = realign
+uint8_t    lcPhase;           // 2 = shuffle, 4 = realign
 long       lcBaseTicks;
 long       lcTargetTicks;
 long       fsTargetTicks;
@@ -445,6 +490,31 @@ void finishLaneCorrect() {
   targetHeading = laneHeading;
   if (cornerCount >= TARGET_CORNERS) goState(STATE_FINAL_STRAIGHT);
   else                               goState(STATE_DRIVE_TO_CORNER);
+}
+
+// ============================================================
+// STATE: WAIT START  (button not wired - fixed 5 s countdown)
+// ============================================================
+void waitStartStep() {
+  if (!entered) {
+    entered = true;
+    phaseT0 = millis();
+    setMotorSpeed(0);
+    setServoAngle(SERVO_TRUE_STRAIGHT);
+    Serial.println(F("[FSM] WAIT_START - 5 s"));
+  }
+  digitalWrite(LED1_PIN, ((millis() / 250) & 1) ? HIGH : LOW);
+
+  if (millis() - phaseT0 >= START_DELAY_MS) {
+    digitalWrite(LED1_PIN, HIGH);
+    lockedColor   = COLOR_NONE;
+    cornerCount   = 0;
+    laneHeading   = gHeading;
+    targetHeading = laneHeading;
+    zeroEncoder();                 // segment origin = start position
+    Serial.println(F("[FSM] GO"));
+    goState(STATE_DRIVE_TO_CORNER);
+  }
 }
 
 // ============================================================
@@ -458,11 +528,10 @@ void driveStep() {
     dcFirstTurn = (lockedColor == COLOR_NONE);
     resetColorDetector();
     resetHeadingPid();
-    dcBaseTicks = readEncoder();     // NO zero - keep the segment origin
+    dcBaseTicks = readEncoder();   // NO zero - keep the segment origin
     setMotorSpeed(BASE_SPEED);
-    dcColorArmed   = false;
-    gapMeasured    = false;
-    sideInvalidStart = 0;
+    dcColorArmed = false;
+    gapMeasured  = false;
     dcLockoutTicks = (cornerCount > 0) ? (long)(POST_CORNER_LOCKOUT_CM * TICKS_PER_CM) : 0;
     dcSafetyTicks  = (long)(SEARCH_SAFETY_CM * TICKS_PER_CM);
   }
@@ -478,13 +547,13 @@ void driveStep() {
 
   if (straightTicks <= dcLockoutTicks) return;
 
+  // ---- 1. arm on the first colour line ----
   if (!dcColorArmed) {
     BlockColor c = detectColor(dcWantFirst);
     if (c != COLOR_NONE) {
       dcColorArmed = true;
-      cornerFirstTicks = readEncoder();          // absolute from segment origin
+      cornerFirstTicks = readEncoder();        // absolute from segment origin
       if (dcFirstTurn) lastFirstColor = c;
-      sideInvalidStart = 0;                       // start the side watch fresh
       resetColorDetector();
       Serial.print(F("  colour gate armed: "));
       Serial.println(c == COLOR_ORANGE ? F("ORANGE") : F("BLUE"));
@@ -492,36 +561,24 @@ void driveStep() {
     return;
   }
 
+  // ---- 2. opportunistic partner-line gap measurement ----
   if (!gapMeasured && detectColor(otherColor(lastFirstColor)) != COLOR_NONE) {
-    long tr = absEnc(readEncoder() - cornerFirstTicks);
-    lastGapCm = (float)tr / TICKS_PER_CM;
+    lastGapCm = (float)absEnc(readEncoder() - cornerFirstTicks) / TICKS_PER_CM;
     gapMeasured = true;
     Serial.print(F("  partner line pre-turn, gap="));
     Serial.print(lastGapCm); Serial.println(F(" cm"));
   }
 
-  // ---- turn confirm: FRONT close OR the respective SIDE wall gone ----
-  // clockwise (orange) -> island on the RIGHT -> watch RIGHT ToF
-  // ccw       (blue)   -> island on the LEFT  -> watch LEFT  ToF
-  bool expectedCW  = dcFirstTurn ? (lastFirstColor == COLOR_ORANGE) : clockwiseMode;
-  bool sidePresent = expectedCW ? tofRok : tofLok;
-  bool sideValid   = expectedCW ? tofRightValid : tofLeftValid;
-
-  bool sideConfirmed = false;
-  if (sidePresent && !sideValid) {                // watched wall reads invalid = gave way
-    if (sideInvalidStart == 0) sideInvalidStart = millis();
-    if (millis() - sideInvalidStart >= SIDE_INVALID_MS) sideConfirmed = true;
-  } else {
-    sideInvalidStart = 0;
-  }
-
+  // ---- 3. turn confirm: front wall close (or a backstop) ----
+  float gateRunCm = (float)absEnc(readEncoder() - cornerFirstTicks) / TICKS_PER_CM;
   bool frontClose = tofFrontValid && (tofFront <= FRONT_TURN_MM);
-  bool noRange    = (!tofFok) && (!tofLok) && (!tofRok);
+  bool noRange    = !tofOk;
+  bool backstop   = gateRunCm >= GATE_TO_TURN_MAX_CM;
 
-  if (frontClose || sideConfirmed || noRange) {
-    if (frontClose)         Serial.println(F("  turn: FRONT close"));
-    else if (sideConfirmed) Serial.println(expectedCW ? F("  turn: RIGHT wall gone") : F("  turn: LEFT wall gone"));
-    else                    Serial.println(F("  turn: colour-only (no range sensors)"));
+  if (frontClose || noRange || backstop) {
+    if      (frontClose) Serial.println(F("  turn: FRONT close"));
+    else if (noRange)    Serial.println(F("  turn: colour-only (no front ToF)"));
+    else                 Serial.println(F("  turn: distance backstop"));
 
     if (lockedColor == COLOR_NONE) {
       lockedColor   = lastFirstColor;
@@ -531,7 +588,7 @@ void driveStep() {
         : F("[FSM] LOCKED BLUE -> COUNTERCLOCKWISE (left turns)"));
     }
 
-    // distance since segment origin (turn-complete / start) to the arm point
+    // distance from segment origin (start / last turn) to the arm point
     float segCm = absEnc(cornerFirstTicks) / TICKS_PER_CM;
     if (cornerCount == 0) {
       firstSegmentCm = segCm;
@@ -548,12 +605,12 @@ void driveStep() {
       Serial.print(F("  final(L-A)=")); Serial.print(finalDistanceCm); Serial.println(F(" cm"));
     }
 
-    goState(STATE_TURNING);          // motor keeps rolling into the turn
+    goState(STATE_TURNING);        // motor keeps rolling into the turn
   }
 }
 
 // ============================================================
-// STATE: TURNING  (eased 90 deg turn + mid-turn partner watch, NO settle)
+// STATE: TURNING  (eased 90 deg arc + mid-turn partner watch, NO settle)
 // ============================================================
 void turningStep() {
   if (!entered) {
@@ -561,35 +618,34 @@ void turningStep() {
     cornerCount++;
     Serial.print(F("[FSM] TURNING - corner "));
     Serial.print(cornerCount); Serial.print(F(" / ")); Serial.println(TARGET_CORNERS);
-    turnAmount    = clockwiseMode ? 90.0 : -90.0;
-    turnTarget    = wrapDeg(laneHeading - turnAmount);
-    turnPartner   = otherColor(lastFirstColor);
+    turnAmount     = clockwiseMode ? 90.0 : -90.0;
+    turnTarget     = wrapDeg(laneHeading - turnAmount);
+    turnPartner    = otherColor(lastFirstColor);
     resetColorDetector();
-    turnGotSecond = gapMeasured;
+    turnGotSecond  = gapMeasured;
     turnStartTicks = readEncoder();
     turnCapTicks   = (long)(120.0 * TICKS_PER_CM);
   }
 
   if (!turnGotSecond && detectColor(turnPartner) != COLOR_NONE) {
-    long tr = absEnc(readEncoder() - cornerFirstTicks);
-    lastGapCm = (float)tr / TICKS_PER_CM;
+    lastGapCm = (float)absEnc(readEncoder() - cornerFirstTicks) / TICKS_PER_CM;
     turnGotSecond = true; gapMeasured = true;
     Serial.print(F("  partner line mid-turn, gap="));
     Serial.print(lastGapCm); Serial.println(F(" cm"));
   }
 
-  if (turnArcStep(turnTarget)) {       // arc finished - proceed immediately
+  if (turnArcStep(turnTarget)) {   // arc finished - proceed immediately
     if (!turnGotSecond) {
       lastGapCm = gapRefCm;
       Serial.println(F("  WARN: partner line missed, skipping correction"));
     }
     laneHeading = wrapDeg(laneHeading - turnAmount);
     if (cornerCount == 1 && !gapRefSet && gapMeasured) {
-      gapRefCm  = lastGapCm; gapRefSet = true;
+      gapRefCm = lastGapCm; gapRefSet = true;
       Serial.print(F("[GAP] reference learned from turn 1 = "));
       Serial.print(gapRefCm); Serial.println(F(" cm"));
     }
-    zeroEncoder();                     // segment origin = this turn corner
+    zeroEncoder();                 // segment origin = this turn corner
     Serial.print(F("  lane heading now ")); Serial.println(laneHeading);
     goState(STATE_LANE_CORRECT);
   }
@@ -602,7 +658,7 @@ void laneCorrectStep() {
   if (!entered) {
     entered = true;
     float delta = lastGapCm - gapRefCm;
-    float mag = fabs(delta);
+    float mag   = fabs(delta);
     if (mag < GAP_DEADBAND_CM) {
       Serial.println(F("  correction skipped (inside deadband)"));
       finishLaneCorrect();
@@ -619,20 +675,20 @@ void laneCorrectStep() {
     Serial.print(offset); Serial.println(F(" deg"));
 
     setServoAngle(servo);
-    setMotorSpeed(CORRECTION_PWM);     // shuffle immediately (servo slews as it rolls)
+    setMotorSpeed(CORRECTION_PWM); // shuffle immediately (servo slews as it rolls)
     lcBaseTicks   = readEncoder();
     lcTargetTicks = (long)(CORRECTION_DISTANCE_CM * TICKS_PER_CM);
     lcPhase = 2;
     return;
   }
 
-  if (lcPhase == 2) {                  // shuffle a fixed distance
+  if (lcPhase == 2) {              // shuffle a fixed distance
     if (absEnc(readEncoder() - lcBaseTicks) >= lcTargetTicks) {
       turnStartTicks = readEncoder();
       turnCapTicks   = (long)(REALIGN_SAFETY_CM * TICKS_PER_CM);
-      lcPhase = 4;                     // realign (no stop)
+      lcPhase = 4;                 // realign (no stop)
     }
-  } else {                             // lcPhase == 4: eased realign onto lane heading
+  } else {                         // lcPhase == 4: eased realign onto lane heading
     if (turnArcStep(laneHeading)) finishLaneCorrect();
   }
 }
@@ -646,7 +702,7 @@ void finalStraightStep() {
   if (!entered) {
     entered = true;
     Serial.print(F("[FSM] FINAL_STRAIGHT to L-A = "));
-    Serial.print(finalDistanceCm); Serial.println(F("cm from turn 12"));
+    Serial.print(finalDistanceCm); Serial.println(F(" cm from turn 12"));
     resetHeadingPid();
     setMotorSpeed(BASE_SPEED);
     fsTargetTicks = (long)(finalDistanceCm * TICKS_PER_CM);
@@ -665,23 +721,13 @@ void finalStraightStep() {
 void setup() {
   Serial.begin(115200);
   initHardware();
-  delay(2000);
 }
 
 void loop() {
   serviceSensors();
 
   switch (currentState) {
-    case STATE_INIT:
-      Serial.println(F("[FSM] INIT"));
-      lockedColor   = COLOR_NONE;
-      cornerCount   = 0;
-      laneHeading   = readHeading();
-      targetHeading = laneHeading;
-      zeroEncoder();                 // segment origin = start position
-      goState(STATE_DRIVE_TO_CORNER);
-      break;
-
+    case STATE_WAIT_START:      waitStartStep();     break;
     case STATE_DRIVE_TO_CORNER: driveStep();         break;
     case STATE_TURNING:         turningStep();       break;
     case STATE_LANE_CORRECT:    laneCorrectStep();   break;
@@ -693,6 +739,9 @@ void loop() {
         Serial.println(F("[FSM] FINISHED"));
         setMotorSpeed(0);
         setServoAngle(SERVO_TRUE_STRAIGHT);
+        digitalWrite(LED1_PIN, HIGH);   // all three solid = finished
+        digitalWrite(LED2_PIN, HIGH);
+        digitalWrite(LED3_PIN, HIGH);
       }
       break;
   }
