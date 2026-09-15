@@ -1,0 +1,29 @@
+Standalone sketch is in sensorcheck/. It reads the TCS34725 with the same direct register burst the firmware uses — not tcs.getRawData(), which adds an integration delay and can hand you different numbers than classifyColor() actually sees.
+
+Live stream (10 Hz, always running):
+
+TOF 412 mm | R 892 G 540 B 441 C 1873 | pR 47.6 pG 28.8 pB 23.5 | tot 1873 -> ORANGE
+
+Calibration — send single letters over serial at 115200:
+
+key	action
+o / b / w	hold the sensor over orange / blue / plain mat, 1.5 s capture
+r	report + paste-ready classifyColor() lines
+l	mute the stream
+
+Capture all three, then r.
+
+How to read the report. Every rule is a boundary between one colour and the other two, and the suggestion lands halfway across the gap:
+
+Gap > 8 pts — solid. Paste the generated lines into classifyColor().
+Gap 3–8 pts — works, but tight. The car reads these at speed with the line blurring past, so real-world spread is wider than a still capture. Nudge the threshold toward the centre of the gap rather than trusting the midpoint exactly.
+OVERLAP — don't touch the thresholds, they can't fix this. It's physical: sensor height, ambient light leaking under the chassis, or the white mat picking up a colour cast.
+
+What to change, by symptom:
+
+White's pR or pB sits near a threshold → this is the classic false-trigger, the car "sees" a line mid-straight and arms the gate early. Widen whichever cap white is crowding.
+tot under ~300 on white → sensor is too high. Drop it closer before touching anything else; every percentage gets noisier as total falls.
+Raw R/G/B near 65535 → saturating. Drop TCS34725_GAIN_16X to _4X in both sketches.
+Totals too dim even up close → raise gain to _60X. Raise INTEGRATIONTIME_2_4MS only as a last resort — at 24 ms the sensor smears a line the car is driving over, and the firmware's non-blocking read depends on the 2.4 ms refresh.
+
+One thing worth doing while you're there: park the car at your intended turn distance and check the ToF column reads stable. FRONT_TURN_MM is 700 — if it flickers to OOR at that range, lower the trigger rather than trusting a sensor at its limit.
