@@ -7,33 +7,35 @@
 #include <VL53L0X.h>
 
 // ============================================================
-// OPEN ROUND - NON-BLOCKING FIRMWARE (new hardware revision)
+// OPEN ROUND - NON-BLOCKING FIRMWARE
 //
-// FSM logic is unchanged from the working build: loop() services every
-// sensor once per pass at max speed, then advances a cooperative state
-// machine. No blocking while-loops, no delay() in the run path. The car
-// flows turn -> shuffle -> realign -> straight without stopping.
+// FSM logic unchanged from the working build: loop() services every
+// sensor once per pass, then advances a cooperative state machine.
+// No blocking while-loops, no delay() in the run path. The car flows
+// turn -> shuffle -> realign -> straight without stopping.
 //
-// WHAT CHANGED vs the old board
-//   motor      PB8/PB9  -> PA2 (RPWM) / PA3 (LPWM), no DRV_EN (hard-tied)
-//   encoder    TIM3 PA6/PA7 -> TIM5 PA0/PA1 (32-bit), PA6/PA7 now SPI
-//   IMU SPI    PB5/PB4/PB3 -> PA7/PA6/PA5, CS PA4, INT PB0, RST PB1
-//   I2C        PB7/PB6 (unchanged), TCA9548 hardware reset added on PB8
-//   front ToF  VL53L1X CH4 -> VL53L0X CH3
-//   colour     auto-scan -> fixed CH4, new thresholds
-//   side ToF   REMOVED - not on this build
-//   servo      centre 69 -> 71, travel 5..115 -> 1..150
-//   ticks/cm   31.933 -> 14.853 (2x motor, new gearing)
-//   speeds     straight-line PWM halved to match the old ground speed
-//   start      button PB15 not wired -> fixed 5 s countdown
+// ---- BENCH-VERIFIED ON THIS HARDWARE ----
+//   motor    PA2 = forward, PA3 = reverse            CONFIRMED
+//   encoder  TIM5 PA0/PA1, reads NEGATIVE on forward
+//            -> readEncoder() negates it             FIXED BELOW
+//   IMU      BNO08x SPI1, ~100 Hz, holds heading to
+//            0.01 deg when stationary                CONFIRMED
+//   ToF      VL53L0X CH3, 33-40 Hz, stable to 570mm  CONFIRMED
+//   colour   TCS34725 CH4: white pR 47 / pB 19,
+//            orange pR 69 / pB 11, blue pR 36 / pB 27
+//            -> all three separate cleanly           CONFIRMED
+//   loop     100 Hz with all three serviced          CONFIRMED
+//   yaw      clockwise = negative, CCW = positive,
+//            which is what the turn law expects       CONFIRMED
 //
-// TURN TRIGGER: with no side ToF the corner is confirmed by the colour
-// line gate plus the front wall closing to FRONT_TURN_MM. A distance
-// backstop fires the turn if the front sensor never confirms.
+// TURN TRIGGER: no side ToF on this build, so a corner is confirmed
+// by the colour line gate plus the front wall closing to
+// FRONT_TURN_MM, with a distance backstop if the front never fires.
 //
-// Distance bookkeeping: the encoder is zeroed only at START and at each
-// TURN COMPLETION, so it measures "distance since the last turn" through
-// the lane correction; A, L and the final straight share that reference.
+// Distance bookkeeping: the encoder is zeroed only at START and at
+// each TURN COMPLETION, so it measures "distance since the last turn"
+// through the lane correction; A, L and the final straight share that
+// reference.
 // ============================================================
 
 enum BlockColor { COLOR_NONE, COLOR_ORANGE, COLOR_BLUE };
@@ -50,8 +52,8 @@ enum RobotState {
 // ============================================================
 // HARDWARE PINS & OBJECTS
 // ============================================================
-const int MOT_RPWM_PIN = PA2;     // TIM2_CH3 (TIM5 is the encoder, no clash)
-const int MOT_LPWM_PIN = PA3;     // TIM2_CH4
+const int MOT_RPWM_PIN = PA2;     // forward  (TIM2_CH3; TIM5 is the encoder)
+const int MOT_LPWM_PIN = PA3;     // reverse  (TIM2_CH4)
 const int SERVO_PIN    = PA8;
 
 const int IMU_CS_PIN  = PA4;
@@ -77,9 +79,13 @@ const float SERVO_TRUE_STRAIGHT = 71.0;
 const float SERVO_MAX_LEFT      = 1.0;
 const float SERVO_MAX_RIGHT     = 150.0;
 
-// ---- speeds: halved from the old build because the motor is 2x RPM ----
-const int BASE_SPEED      = 70;   // was 150
-const int CORRECTION_PWM  = 55;   // was 70; shuffle speed
+// Bench-confirmed: clockwise reads negative, CCW positive. turnArcStep()
+// drives toward (laneHeading - 90) for a clockwise corner, so this stays
+// at 1.0. Only flip it if the IMU is ever remounted upside down.
+const float IMU_YAW_SIGN = 1.0;
+
+const int BASE_SPEED     = 70;
+const int CORRECTION_PWM = 55;
 
 const unsigned long START_DELAY_MS = 5000;
 
@@ -105,7 +111,7 @@ const uint16_t FRONT_TURN_MM    = 700;
 const int   TARGET_CORNERS    = 12;
 const int   FINAL_STRAIGHT_CM = 100;
 const float SEARCH_SAFETY_CM  = 400.0;
-const float GATE_TO_TURN_MAX_CM = 150.0;  // backstop: turn even if front ToF never confirms
+const float GATE_TO_TURN_MAX_CM = 150.0;  // backstop if the front ToF never confirms
 
 float firstSegmentCm      = 0.0;
 float fullStartStraightCm = 0.0;
@@ -193,8 +199,11 @@ void setServoAngle(float angleDeg) {
 }
 
 // ---- TIM5 encoder (32-bit counter on PA0/PA1) ----
+// Bench-confirmed: driving PA2 (forward) counts DOWN, so negate here.
+// Every distance in the FSM is a difference of readEncoder(), so this
+// single sign flip makes forward travel positive everywhere.
 void zeroEncoder() { TIM5->CNT = 0; }
-long readEncoder() { return (int32_t)TIM5->CNT; }
+long readEncoder() { return -(int32_t)TIM5->CNT; }
 long absEnc(long v) { return v < 0 ? -v : v; }
 
 // ---- IMU ----
@@ -206,7 +215,11 @@ float readYaw() {
                            (qReal * qReal + qI * qI - qJ * qJ - qK * qK));
   return yawRadians * (180.0 / PI);
 }
-float readHeading() { return fmod(readYaw() - initialYawOffset + 540.0, 360.0) - 180.0; }
+
+float readHeading() {
+  float h = fmod(readYaw() - initialYawOffset + 540.0, 360.0) - 180.0;
+  return IMU_YAW_SIGN * h;
+}
 
 void zeroYaw() {   // startup-only blocking zero (car not running yet)
   Serial.println(F("Waiting for valid IMU data to set Zero..."));
@@ -238,6 +251,23 @@ void readColor(uint16_t &r, uint16_t &g, uint16_t &b, uint16_t &c) {
   b  = (uint16_t)Wire.read();  b |= (uint16_t)Wire.read() << 8;
 }
 
+// Calibrated on the mat. Measured: white pR 47 / pB 19 (rejected by both
+// rules), orange pR 69 / pB 11, blue pR 36 / pB 27.
+BlockColor classifyColor() {
+  uint16_t r, g, b, c;
+  readColor(r, g, b, c);
+  float total = (float)r + (float)g + (float)b;
+  if (total < 100.0f) return COLOR_NONE;       // dark or out of range
+  float pR = (r / total) * 100.0f;
+  float pB = (b / total) * 100.0f;
+
+  // ORANGE: strong red dominance (> 60%), low blue (< 15%)
+  if (pR > 60.0f && pB < 15.0f) return COLOR_ORANGE;
+  // BLUE: red must drop below 40% AND blue clear 23%
+  if (pB > 23.0f && pR < 40.0f) return COLOR_BLUE;
+  return COLOR_NONE;
+}
+
 const unsigned long COLOR_CONFIRM_MS = 6;
 BlockColor    pendingColor = COLOR_NONE;
 unsigned long pendingStart = 0;
@@ -247,20 +277,6 @@ void resetColorDetector() { pendingColor = COLOR_NONE; pendingStart = 0; }
 BlockColor otherColor(BlockColor c) {
   if (c == COLOR_ORANGE) return COLOR_BLUE;
   if (c == COLOR_BLUE)   return COLOR_ORANGE;
-  return COLOR_NONE;
-}
-
-// Raw classification, thresholds from the bench test sketch.
-// Run once per loop by serviceSensors() and cached in gRawColor.
-BlockColor classifyColor() {
-  uint16_t r, g, b, c;
-  readColor(r, g, b, c);
-  float total = (float)r + (float)g + (float)b;
-  if (total < 100.0f) return COLOR_NONE;       // below this it is dark / no mat
-  float pR = (r / total) * 100.0f;
-  float pB = (b / total) * 100.0f;
-  if (pB > 36.0f && pR < 28.0f) return COLOR_BLUE;
-  if (pR > 36.0f && pB < 28.0f) return COLOR_ORANGE;
   return COLOR_NONE;
 }
 
@@ -401,14 +417,13 @@ const float YAW_FILT_ALPHA = 0.35;
 const float SERVO_SLEW     = 2.5;
 const float INTEGRAL_CLAMP = 300.0;
 
-float         pidPrevError = 0.0;
 unsigned long pidPrevTime  = 0;
 float         pidIntegral  = 0.0;
 float         yawFilt      = 0.0;
 float         prevServoCmd = SERVO_TRUE_STRAIGHT;
 
 void resetHeadingPid() {
-  pidPrevError = 0.0;  pidPrevTime = millis();
+  pidPrevTime  = millis();
   pidIntegral  = 0.0;  yawFilt = 0.0;
   prevServoCmd = SERVO_TRUE_STRAIGHT;
 }
@@ -429,13 +444,12 @@ void updateHeadingPid(float heading) {
   if (cmd <= SERVO_MAX_LEFT || cmd >= SERVO_MAX_RIGHT) pidIntegral -= error * dt;
   setServoAngle(cmd);
   prevServoCmd = cmd;
-  pidPrevError = error;
   pidPrevTime  = now;
 }
 
 // ============================================================
 // EASED TURN LAW - verbatim from the tuned turning90 sketch.
-// Already validated on the 2x motor, so these PWMs are NOT halved.
+// Already validated on this motor, so these PWMs are NOT scaled.
 // ============================================================
 const float TURN_KP        = 2.5;
 const float TURN_MAX_STEER = 55.0;
