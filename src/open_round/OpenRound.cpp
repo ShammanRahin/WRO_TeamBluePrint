@@ -46,6 +46,7 @@ enum RobotState {
   STATE_TURNING,
   STATE_LANE_CORRECT,
   STATE_FINAL_STRAIGHT,
+  STATE_RECOVER,
   STATE_FINISHED
 };
 
@@ -104,6 +105,13 @@ uint16_t tofFront = 9999;
 bool     tofFrontValid = false;
 const uint16_t TOF_MAX_VALID_MM = 1200;   // VL53L0X practical ceiling
 const uint16_t FRONT_TURN_MM    = 700;
+
+// ---- wall recovery ----
+const uint16_t WALL_PANIC_MM  = 200;   // this close -> stop and back off
+const uint16_t WALL_CLEAR_MM  = 350;   // backed off far enough to resume
+const int      RECOVER_PWM    = 90;    // reverse speed
+const float    RECOVER_MAX_CM = 30.0;  // hard cap on one backup
+const int      RECOVER_MAX_TRIES = 3;  // consecutive failed backups before giving up
 
 // ============================================================
 // RUN CONSTANTS
@@ -193,8 +201,11 @@ void setMotorSpeed(int speed) {
   else                { analogWrite(MOT_RPWM_PIN, 0);     analogWrite(MOT_LPWM_PIN, 0); }
 }
 
+float lastServoCmd = SERVO_TRUE_STRAIGHT;   // whatever was last commanded
+
 void setServoAngle(float angleDeg) {
   angleDeg = constrain(angleDeg, SERVO_MAX_LEFT, SERVO_MAX_RIGHT);
+  lastServoCmd = angleDeg;
   steeringServo.writeMicroseconds((int)((angleDeg / 180.0) * 1000.0) + 1000);
 }
 
@@ -261,8 +272,10 @@ BlockColor classifyColor() {
   float pR = (r / total) * 100.0f;
   float pB = (b / total) * 100.0f;
 
-  // ORANGE: strong red dominance (> 60%), low blue (< 15%)
-  if (pR > 60.0f && pB < 15.0f) return COLOR_ORANGE;
+  // ORANGE: loosened from 60/15. Measured white tops out at pR 48.7,
+  // orange runs 52-69, so pR carries the separation with ~3 pts of margin
+  // and the pB cap is only a backstop.
+  if (pR > 52.0f && pB < 18.0f) return COLOR_ORANGE;
   // BLUE: red must drop below 40% AND blue clear 23%
   if (pB > 23.0f && pR < 40.0f) return COLOR_BLUE;
   return COLOR_NONE;
@@ -274,6 +287,14 @@ unsigned long pendingStart = 0;
 
 void resetColorDetector() { pendingColor = COLOR_NONE; pendingStart = 0; }
 
+// Colour mute. Backing away from a wall can drag the sensor back over lines
+// the car already used. Muting from the moment reverse starts until the car
+// has driven forward past that same point means every line re-crossed on the
+// way back out is ignored, and detection only resumes on new ground.
+// gRawColor is NOT muted, so the status LEDs keep showing what is underneath.
+bool colorMuted    = false;
+long colorMuteFrom = 0;
+
 BlockColor otherColor(BlockColor c) {
   if (c == COLOR_ORANGE) return COLOR_BLUE;
   if (c == COLOR_BLUE)   return COLOR_ORANGE;
@@ -282,6 +303,7 @@ BlockColor otherColor(BlockColor c) {
 
 // Debounced, optionally filtered to one colour. Reads this loop's cached value.
 BlockColor detectColor(BlockColor wantColor) {
+  if (colorMuted) { resetColorDetector(); return COLOR_NONE; }
   BlockColor rawColor = gRawColor;
   if (wantColor != COLOR_NONE && rawColor != wantColor) rawColor = COLOR_NONE;
 
@@ -498,12 +520,88 @@ bool       turnGotSecond;
 uint8_t    lcPhase;           // 2 = shuffle, 4 = realign
 long       lcBaseTicks;
 long       lcTargetTicks;
+bool       lcGateSeen = false;   // gate line crossed during lane correction
+long       lcGateTicks = 0;      // where it was crossed
 long       fsTargetTicks;
 
 void finishLaneCorrect() {
   targetHeading = laneHeading;
   if (cornerCount >= TARGET_CORNERS) goState(STATE_FINAL_STRAIGHT);
   else                               goState(STATE_DRIVE_TO_CORNER);
+}
+
+// ============================================================
+// STATE: RECOVER  (wall too close - back off, then resume)
+//
+// Interrupts whatever was running and returns to it afterwards, so a
+// turn that ran out of room finishes its arc instead of being abandoned.
+// The saved `entered` flag comes back with the state, so the interrupted
+// state does NOT re-run its setup - TURNING will not double-count a corner.
+//
+// Reversing uses the MIRROR of the last steering command. Backing up with
+// counter-steer keeps rotating the car the way it was already turning
+// (the three-point-turn move) instead of retracing the arc backwards.
+// ============================================================
+RobotState recoverReturnState   = STATE_DRIVE_TO_CORNER;
+bool       recoverReturnEntered = false;
+long       recoverBaseTicks     = 0;
+int        recoverTries         = 0;
+
+void enterRecovery() {
+  recoverReturnState   = currentState;
+  recoverReturnEntered = entered;
+  colorMuted    = true;             // ignore lines re-crossed while reversing
+  colorMuteFrom = readEncoder();    // ...until we are forward of here again
+  currentState = STATE_RECOVER;
+  entered = false;
+}
+
+void recoverStep() {
+  if (!entered) {
+    entered = true;
+    setMotorSpeed(0);
+    setServoAngle(2.0 * SERVO_TRUE_STRAIGHT - lastServoCmd);   // mirror
+    setMotorSpeed(-RECOVER_PWM);
+    recoverBaseTicks = readEncoder();
+    Serial.print(F("[FSM] RECOVER - wall at "));
+    Serial.print(tofFront); Serial.println(F(" mm, backing off"));
+  }
+
+  bool clear   = tofFrontValid && (tofFront >= WALL_CLEAR_MM);
+  bool backedFar = absEnc(readEncoder() - recoverBaseTicks)
+                   >= (long)(RECOVER_MAX_CM * TICKS_PER_CM);
+  if (!clear && !backedFar) return;
+
+  setMotorSpeed(0);
+
+  // Only a genuine clear resets the counter. Exiting on the distance cap
+  // with the wall still there means the backup achieved nothing, so those
+  // attempts accumulate and eventually stop us retreating forever.
+  if (clear) { recoverTries = 0;  Serial.println(F("  clear - resuming")); }
+  else       { recoverTries++;    Serial.print(F("  backup limit, wall still close (try "));
+               Serial.print(recoverTries); Serial.println(F(") - resuming")); }
+
+  currentState = recoverReturnState;
+  entered      = recoverReturnEntered;
+  resetHeadingPid();
+
+  // Recovery zeroed the motor, so hand back whatever drive the resumed
+  // state expects. TURNING and the realign arc set their own PWM each step.
+  switch (recoverReturnState) {
+    case STATE_DRIVE_TO_CORNER:
+    case STATE_FINAL_STRAIGHT:
+      setMotorSpeed(BASE_SPEED);
+      break;
+    case STATE_LANE_CORRECT:
+      // If the shuffle drove us into a wall it was too aggressive - drop
+      // the rest of it and go straight to the realign.
+      lcPhase        = 4;
+      turnStartTicks = readEncoder();
+      turnCapTicks   = (long)(REALIGN_SAFETY_CM * TICKS_PER_CM);
+      break;
+    default:
+      break;
+  }
 }
 
 // ============================================================
@@ -523,6 +621,9 @@ void waitStartStep() {
     digitalWrite(LED1_PIN, HIGH);
     lockedColor   = COLOR_NONE;
     cornerCount   = 0;
+    lcGateSeen    = false;
+    colorMuted    = false;
+    recoverTries  = 0;
     laneHeading   = gHeading;
     targetHeading = laneHeading;
     zeroEncoder();                 // segment origin = start position
@@ -544,8 +645,19 @@ void driveStep() {
     resetHeadingPid();
     dcBaseTicks = readEncoder();   // NO zero - keep the segment origin
     setMotorSpeed(BASE_SPEED);
-    dcColorArmed = false;
     gapMeasured  = false;
+
+    // A gate line crossed during lane correction carries over, so a corner
+    // reached while the car was still correcting is not thrown away.
+    if (lcGateSeen) {
+      dcColorArmed     = true;
+      cornerFirstTicks = lcGateTicks;
+      lcGateSeen       = false;
+      Serial.println(F("  entering DRIVE already armed (gate seen in lane correct)"));
+    } else {
+      dcColorArmed = false;
+    }
+
     dcLockoutTicks = (cornerCount > 0) ? (long)(POST_CORNER_LOCKOUT_CM * TICKS_PER_CM) : 0;
     dcSafetyTicks  = (long)(SEARCH_SAFETY_CM * TICKS_PER_CM);
   }
@@ -559,7 +671,11 @@ void driveStep() {
 
   updateHeadingPid(targetHeading);
 
-  if (straightTicks <= dcLockoutTicks) return;
+  // Lockout runs from the TURN CORNER (encoder zero), not from the start of
+  // this state, so distance already covered during lane correction counts
+  // toward it. Measuring it from here instead made the two stack, and the
+  // next gate line went by un-watched.
+  if (!dcColorArmed && absEnc(readEncoder()) <= dcLockoutTicks) return;
 
   // ---- 1. arm on the first colour line ----
   if (!dcColorArmed) {
@@ -693,7 +809,22 @@ void laneCorrectStep() {
     lcBaseTicks   = readEncoder();
     lcTargetTicks = (long)(CORRECTION_DISTANCE_CM * TICKS_PER_CM);
     lcPhase = 2;
+    resetColorDetector();
     return;
+  }
+
+  // Keep watching for the NEXT corner's gate line while correcting. The
+  // shuffle plus realign can cover enough ground to cross it, and ignoring
+  // it here meant the car entered DRIVE_TO_CORNER un-armed and sailed
+  // straight past the corner. Same 50 cm lockout from the turn corner that
+  // the drive state uses, so the lines we just turned on cannot re-trigger.
+  if (!lcGateSeen && lockedColor != COLOR_NONE &&
+      absEnc(readEncoder()) >= (long)(POST_CORNER_LOCKOUT_CM * TICKS_PER_CM)) {
+    if (detectColor(lockedColor) != COLOR_NONE) {
+      lcGateSeen  = true;
+      lcGateTicks = readEncoder();
+      Serial.println(F("  gate line seen during lane correct - carried forward"));
+    }
   }
 
   if (lcPhase == 2) {              // shuffle a fixed distance
@@ -740,12 +871,29 @@ void setup() {
 void loop() {
   serviceSensors();
 
+  // Release the colour mute once we have driven forward past the point where
+  // the reverse began - everything ahead of it is ground we have not used.
+  if (colorMuted && currentState != STATE_RECOVER && readEncoder() >= colorMuteFrom) {
+    colorMuted = false;
+    Serial.println(F("  colour detection re-enabled"));
+  }
+
+  // Wall panic overlay: can interrupt any moving state and resume it.
+  if (currentState != STATE_RECOVER &&
+      currentState != STATE_WAIT_START &&
+      currentState != STATE_FINISHED &&
+      recoverTries < RECOVER_MAX_TRIES &&
+      tofFrontValid && tofFront <= WALL_PANIC_MM) {
+    enterRecovery();
+  }
+
   switch (currentState) {
     case STATE_WAIT_START:      waitStartStep();     break;
     case STATE_DRIVE_TO_CORNER: driveStep();         break;
     case STATE_TURNING:         turningStep();       break;
     case STATE_LANE_CORRECT:    laneCorrectStep();   break;
     case STATE_FINAL_STRAIGHT:  finalStraightStep(); break;
+    case STATE_RECOVER:         recoverStep();       break;
 
     case STATE_FINISHED:
       if (!entered) {
