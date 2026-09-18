@@ -102,8 +102,12 @@ stateDiagram-v2
 
 Between corners, the vehicle holds the current lane heading with a heading controller (PID structure, run with only the P term):
 
-$$\text{error} = \text{target\_heading} - \text{current\_heading}$$
-$$\text{servo} = \text{SERVO\_TRUE\_STRAIGHT} + K_{p,\text{head}} \cdot \text{error}$$
+```math
+\text{error} = \text{target\_heading} - \text{current\_heading}
+```
+```math
+\text{servo} = \text{SERVO\_TRUE\_STRAIGHT} + K_{p,\text{head}} \cdot \text{error}
+```
 
 * Slew-rate limited to `SERVO_SLEW` ($2.5^\circ/\text{cycle}$) to suppress yaw jerk and wheel scrub.
 * $K_i = 0$ and $K_d = 0$ as tuned: the D term would act on filtered yaw rate (`YAW_FILT_ALPHA = 0.35`) and mechanical offset is calibrated out through `SERVO_TRUE_STRAIGHT`.
@@ -134,9 +138,13 @@ Thus, the distance between the two line crossings acts as a precise lateral rule
 ### Implementation Logic
 1. **Self-Referenced Baseline**: On Corner 1, the car measures the encoder distance between crossing line 1 and line 2 and stores it as the reference (`gapRefCm`). Until then the reference defaults to `GAP_THRESHOLD_CM` (20 cm). The vehicle does not assume an idealized track position; it holds the line it started on.
 2. **Error Calculation**: On every subsequent corner:
-   $$\text{gap\_error} = \text{measured\_gap} - \text{reference\_gap}$$
+   ```math
+   \text{gap\_error} = \text{measured\_gap} - \text{reference\_gap}
+   ```
 3. **Proportional Steering Offset**:
-   $$\theta_{\text{offset}} = \min(K_{\text{lat}} \cdot |\text{gap\_error}|,\; 30^\circ) \quad (K_{\text{lat}} = 4^\circ/\text{cm})$$
+   ```math
+   \theta_{\text{offset}} = \min(K_{\text{lat}} \cdot |\text{gap\_error}|,\; 30^\circ) \quad (K_{\text{lat}} = 4^\circ/\text{cm})
+   ```
    The servo is held $\theta_{\text{offset}}$ off `SERVO_TRUE_STRAIGHT` (side chosen from the sign of the error and the driving direction) for `CORRECTION_DISTANCE_CM` ($25\text{ cm}$) at reduced speed (`CORRECTION_PWM` = 55 Open / 70 Obstacle), then an eased arc brings the car back onto the lane heading.
 4. **Deadband & Missing Lines**:
    * Errors under `GAP_DEADBAND_CM` ($2\text{ cm}$) are ignored to prevent hunting.
@@ -149,8 +157,12 @@ Thus, the distance between the two line crossings acts as a precise lateral rule
 
 Turns are executed with a non-blocking, eased proportional control law terminating strictly on IMU yaw:
 
-$$\text{steer} = \text{clamp}(K_{p,\text{turn}} \cdot |\text{error}|,\; \text{TURN\_MIN\_STEER},\; \text{TURN\_MAX\_STEER})$$
-$$\text{pwm} = \text{clamp}(K_{v,\text{turn}} \cdot |\text{error}|,\; \text{TURN\_MIN\_PWM},\; \text{TURN\_MAX\_PWM})$$
+```math
+\text{steer} = \text{clamp}(K_{p,\text{turn}} \cdot |\text{error}|,\; \text{TURN\_MIN\_STEER},\; \text{TURN\_MAX\_STEER})
+```
+```math
+\text{pwm} = \text{clamp}(K_{v,\text{turn}} \cdot |\text{error}|,\; \text{TURN\_MIN\_PWM},\; \text{TURN\_MAX\_PWM})
+```
 
 * As the vehicle approaches the target heading, speed and steering angle smoothly taper down to prevent exit overshoot.
 * **No Settle Delay**: The turn hands off immediately when $|\text{error}| < 0.3^\circ$ (or after a 120 cm encoder cap). Residual error is absorbed while driving down the next straight.
@@ -226,7 +238,9 @@ A lock-guarded shared state (one slot per producer) connects the sensor threads 
 * Camera acquisition via `Picamera2` at $640 \times 480$, HSV thresholding from `config.json`, published at up to ~30 Hz.
 * Module-level detection functions share bit-for-bit identical code between the autonomous run loop and the tuning dashboard.
 * Calculates angular bearing from optical principal point:
-  $$\text{bearing} = -\left(\frac{c_x - \frac{W}{2}}{\frac{W}{2}}\right) \cdot \frac{\text{HFOV}}{2}$$
+  ```math
+  \text{bearing} = -\left(\frac{c_x - \frac{W}{2}}{\frac{W}{2}}\right) \cdot \frac{\text{HFOV}}{2}
+  ```
 * `hfov_deg` in `config.json` is 62°, a standard Pi-camera figure — it must be changed to the real field of view if the 160° fisheye is fitted (and a linear pixel-to-angle map is only approximate for a fisheye).
 
 ### Asynchronous LiDAR Pipeline (`sensors/lidar.py`)

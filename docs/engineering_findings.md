@@ -15,7 +15,9 @@
 * **Optical Environment**: The WRO Future Engineers mat is high-reflectance white vinyl (Rule 13.2), while perimeter and interior corridor walls are low-reflectance matte black MDF (Rules 13.4, 13.6).
 * **Optical Spread**: The VL53L0X has a fixed, uncollimated Field of View of $\approx 25^\circ$ (no programmable ROI). The VL53L1X used by the obstacle program has a similar default FoV.
 * **Chassis Rake**: Due to front wheel diameter ($46\text{ mm}$) and rear wheel diameter ($50\text{ mm}$), the chassis sits with a natural nose-down rake:
-  $$\text{rake} = \arctan\left(\frac{(50 - 46)/2}{L}\right) = \arctan\left(\frac{2}{136.14}\right) \approx 0.84^\circ\text{ nose-down}$$
+  ```math
+  \text{rake} = \arctan\left(\frac{(50 - 46)/2}{L}\right) = \arctan\left(\frac{2}{136.14}\right) \approx 0.84^\circ\text{ nose-down}
+  ```
   (The July analysis used the then-measured $L = 110\text{ mm}$, giving $1.04^\circ$.)
 * **Consequence**: The bottom of the sensor's infrared cone struck the reflective white floor at just $166\text{ mm}$. Because the white mat returned a vastly higher photon count than the distant black wall, the sensor locked onto the floor, reporting phantom walls and triggering false corner turns.
 
@@ -25,14 +27,20 @@ The mitigation was engineered in Python ([`electrical/collimator.py`](../electri
 1. **Printed Slot Collimator Baffles**:
    * 3D printed a narrow horizontal slit aperture: $2.5\text{ mm tall} \times 10\text{ mm wide} \times 20\text{ mm deep}$.
    * Narrows the vertical optical half-angle from $12.5^\circ$ down to:
-     $$\theta_v = \arctan\left(\frac{1.25}{20}\right) \approx 3.58^\circ$$
+     ```math
+     \theta_v = \arctan\left(\frac{1.25}{20}\right) \approx 3.58^\circ
+     ```
    * The slot is intentionally wide ($10\text{ mm}$) because the VL53 emitter and receiver apertures are spaced $2.5\text{ mm}$ apart; a round aperture would vignette the detector.
 2. **Mechanical Upward Mounting Wedge ($+2.0^\circ$)**:
    * Cancels the $0.84^\circ$ chassis rake and adds upward tilt on top.
    * Net effective vertical half-angle relative to the floor:
-     $$\theta_{\text{eff}} = 3.58^\circ + 0.84^\circ - 2.0^\circ = 2.42^\circ$$
+     ```math
+     \theta_{\text{eff}} = 3.58^\circ + 0.84^\circ - 2.0^\circ = 2.42^\circ
+     ```
    * Pushes the first ground reflection out to:
-     $$d_{\text{floor}} = \frac{h}{\tan(\theta_{\text{eff}})} = \frac{40\text{ mm}}{\tan(2.42^\circ)} \approx \mathbf{947\text{ mm}}$$
+     ```math
+     d_{\text{floor}} = \frac{h}{\tan(\theta_{\text{eff}})} = \frac{40\text{ mm}}{\tan(2.42^\circ)} \approx \mathbf{947\text{ mm}}
+     ```
      (`python electrical/collimator.py --wheelbase 136.14`; with the July $110\text{ mm}$ wheelbase the same solver gives $870\text{ mm}$).
    * Either way this clears the nominal corridor side walls ($442.5\text{ mm}$) with over $400\text{ mm}$ of margin.
 3. **Signal Strength Filter** (obstacle program, VL53L1X):
@@ -88,7 +96,9 @@ We abandoned the two-arc manoeuvre in favour of an iterative **multi-point shuff
 * **Simulation Prediction**: A kinematic Monte-Carlo slop model plus a pymunk friction sim showed the single bearing joint tolerated build slop about $3\times$ better than multi-link mechanisms ([`journal/steering-study-2026-07-12.md`](../journal/steering-study-2026-07-12.md)).
 * **Why It Failed on the Track**:
   Rotating the entire front beam translated the outer front tire forward and the inner tire rearward by:
-  $$\Delta x = \frac{W}{2} \cdot \sin(\delta) = \frac{105\text{ mm}}{2} \cdot \sin(35^\circ) \approx \pm 30.1\text{ mm}$$
+  ```math
+  \Delta x = \frac{W}{2} \cdot \sin(\delta) = \frac{105\text{ mm}}{2} \cdot \sin(35^\circ) \approx \pm 30.1\text{ mm}
+  ```
   This longitudinal wheel sweep consumed **$36\%$ of the entire $82.5\text{ mm}$ parking slack** — clearance the car needs most exactly when it is turning.
 
 ### Attempt 2: Parallelogram (Tie-Bar) Steering
@@ -96,7 +106,9 @@ We abandoned the two-arc manoeuvre in favour of an iterative **multi-point shuff
 * **Result**: Knuckle pivot centers remained fixed, eliminating the longitudinal tire sweep and fixing the swept envelope.
 * **Why It Failed on the Track**:
   In any turn, the inner wheel follows a tighter turning radius than the outer wheel:
-  $$R_{\text{inner}} = \frac{L}{\tan\delta_{\text{inner}}} \quad < \quad R_{\text{outer}} = \frac{L}{\tan\delta_{\text{outer}}}$$
+  ```math
+  R_{\text{inner}} = \frac{L}{\tan\delta_{\text{inner}}} \quad < \quad R_{\text{outer}} = \frac{L}{\tan\delta_{\text{outer}}}
+  ```
   A parallelogram forces both knuckles to the exact same angle ($\delta_{\text{inner}} = \delta_{\text{outer}}$). The angular difference between the ideal rolling vectors was forced into **continuous lateral tire scrub**:
   1. Audible tire squeal and rubber scuffing across corner turns.
   2. Inconsistent corner exit headings run-to-run.
@@ -110,10 +122,14 @@ We abandoned the two-arc manoeuvre in favour of an iterative **multi-point shuff
   * **Ackermann Arm Angle**: Knuckle steering arms are angled inward at **$107.0^\circ$ / $73.0^\circ$** ($17.0^\circ$ inclination from longitudinal axis).
 * **Kinematic Convergence Proof**:
   To achieve pure 100% Ackermann rolling where arm extension rays intersect at the center of the rear axle:
-  $$\alpha = \arctan\left(\frac{K_w / 2}{L}\right) = \arctan\left(\frac{80.589\text{ mm} / 2}{136.139\text{ mm}}\right) = \arctan(0.29597) = 16.49^\circ \approx 16.5^\circ$$
+  ```math
+  \alpha = \arctan\left(\frac{K_w / 2}{L}\right) = \arctan\left(\frac{80.589\text{ mm} / 2}{136.139\text{ mm}}\right) = \arctan(0.29597) = 16.49^\circ \approx 16.5^\circ
+  ```
   The CAD design angle of **$17.0^\circ$** is within $0.5^\circ$ of this, so the arm lines meet just ahead of the rear axle centre — very close to full Ackermann.
 * **Kinematic Result**:
-  $$\cot\delta_{\text{outer}} - \cot\delta_{\text{inner}} = \frac{K_w}{L}$$
+  ```math
+  \cot\delta_{\text{outer}} - \cot\delta_{\text{inner}} = \frac{K_w}{L}
+  ```
   (the Ackermann condition uses the kingpin spacing $K_w$). Both front wheels then roll close to perpendicular to rays from a single instantaneous centre of rotation, so front-tyre scrub is largely removed and cornering is quieter and more repeatable. The solid rear axle still scrubs in corners (see Decision #14), but that does not bias the axle encoder. Minimum turn radius at $35^\circ$ lock is $R = \frac{L}{\tan(35^\circ)} = 194.4\text{ mm}$.
 
 ---

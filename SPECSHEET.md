@@ -76,7 +76,9 @@ see Decisions #23–#28.
 `R = wheelbase / tan(lock) = 136.14 / tan(35 deg) = **194.4 mm**`
 
 Ackermann geometry condition:
-$$\alpha = \arctan\left(\frac{K_w / 2}{L}\right) = \arctan\left(\frac{80.589 / 2}{136.139}\right) = \arctan(0.29597) = 16.49^\circ \approx 16.5^\circ$$
+```math
+\alpha = \arctan\left(\frac{K_w / 2}{L}\right) = \arctan\left(\frac{80.589 / 2}{136.139}\right) = \arctan(0.29597) = 16.49^\circ \approx 16.5^\circ
+```
 The CAD knuckle steering arms are set at **107.0° / 73.0°** ($17.0^\circ$ relative to the longitudinal axis), within $0.5^\circ$ of the ideal Ackermann convergence at the rear axle centre.
 
 ### Chassis rake — verified from CAD
