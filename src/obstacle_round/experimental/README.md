@@ -5,6 +5,6 @@ car — that is [`../ObstacleRound.cpp`](../ObstacleRound.cpp).
 
 | File | What it was |
 |---|---|
-| `obs2.cpp` | Second avoidance strategy, developed in parallel in August 2026. Superseded by the offset-based approach now in `ObstacleRound.cpp`. Kept because the cooldown handling here is cleaner and may come back. |
+| `obs2.cpp` | Second avoidance strategy, developed in parallel in August 2026. Superseded by the offset-based approach now in `ObstacleRound.cpp`. Kept because the cooldown handling here is cleaner and may come back. Uses the earlier pin map. |
 
 Nothing in this folder is flashed for a scored run.

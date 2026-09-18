@@ -1,5 +1,4 @@
-Video
-====
+# Video
 
-This directory  contain the video.md file with a URL to YouTubeshowing the vehicle driving autonomously.
-
+This directory contains [`video.md`](video.md) with links to YouTube videos of the vehicle
+driving autonomously — one for each challenge.

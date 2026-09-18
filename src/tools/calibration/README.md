@@ -5,8 +5,12 @@ that runs all eight from one flash.
 
 The full procedure — what rig you need, what to expect, how to read the output,
 and what to do when it looks wrong — is in
-[section 8 of the main README](../../../README.md#8-calibration). Read that first. These
+[`docs/calibration.md`](../../../docs/calibration.md). Read that first. These
 files are the tools; that page is the method.
+
+> ⚠️ `hardware_config.h` still holds the **earlier pin map** (motor PB9/PB8, encoder
+> TIM3 on PA6/PA7, IMU on PB3–PB5, button PA5). The current carrier used by
+> `OpenRound.cpp` is re-pinned — update this header before running these sketches on it.
 
 | File | Step |
 |---|---|

@@ -1,4 +1,4 @@
-Standalone sketch is in sensorcheck/. It reads the TCS34725 with the same direct register burst the firmware uses — not tcs.getRawData(), which adds an integration delay and can hand you different numbers than classifyColor() actually sees.
+NOTE: this describes the earlier colour-capture version of tof_test.ino (commit a6f685e). The current tof_test.ino is a three-ToF test instead. It reads the TCS34725 with the same direct register burst the firmware uses — not tcs.getRawData(), which adds an integration delay and can hand you different numbers than classifyColor() actually sees.
 
 Live stream (10 Hz, always running):
 
@@ -8,7 +8,7 @@ Calibration — send single letters over serial at 115200:
 
 key	action
 o / b / w	hold the sensor over orange / blue / plain mat, 1.5 s capture
-r	report + paste-ready classifyColor() lines
+r	report + paste-ready classifyColor() lines for OpenRound.cpp
 l	mute the stream
 
 Capture all three, then r.
