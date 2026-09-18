@@ -254,8 +254,12 @@ To correct lateral drift over 12 corners without relying on wall-following, we u
 * The distance travelled between crossing the first line and its partner line indicates the car's lateral position in the lane.
 * The gap measured at Corner 1 becomes the reference (`gapRefCm`; the default before it is learned is `GAP_THRESHOLD_CM` = 20 cm).
 * At every later corner:
-  $$\Delta\text{gap} = \text{measured\_gap} - \text{reference\_gap}$$
-  $$\theta_{\text{offset}} = \min(4^\circ/\text{cm} \cdot |\Delta\text{gap}|,\; 30^\circ)$$
+  ```math
+  \Delta\text{gap} = \text{measured\_gap} - \text{reference\_gap}
+  ```
+  ```math
+  \theta_{\text{offset}} = \min(4^\circ/\text{cm} \cdot |\Delta\text{gap}|,\; 30^\circ)
+  ```
   If $|\Delta\text{gap}|$ is under the 2 cm deadband nothing is done. Otherwise the servo is held $\theta_{\text{offset}}$ off straight for $25\text{ cm}$ after the turn, then the car eases back onto the lane heading.
 
 ---
