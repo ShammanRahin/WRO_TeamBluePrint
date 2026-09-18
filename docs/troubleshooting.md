@@ -97,7 +97,7 @@
 * **Symptom**: The STM32 randomly resets during sudden steering transitions and restarts from boot (`setup()`).
 * **Root Cause**: Rapid servo actuation draws instantaneous current spikes of up to $2.5\text{A}$, causing voltage sags on shared power rails.
 * **Fix**:
-  1. Power the steering servo from a dedicated $6.0\text{V}$, $3\text{A}$ buck regulator with a $470\,\mu\text{F}$ low-ESR capacitor at the servo plug.
+  1. Power the steering servo from a dedicated $6.0\text{V}$, $3\text{A}$ buck regulator with a $470~\mu\text{F}$ low-ESR capacitor at the servo plug.
   2. Enforce software slew rate limiting (`SERVO_SLEW = 2.5 deg/cycle`).
 
 ---

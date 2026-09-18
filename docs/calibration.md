@@ -62,7 +62,9 @@ flowchart LR
 * **Objective**: Measure the real linear travel per encoder tick under competition load.
 * **Current Values**: **`14.853 ticks/cm`** in `OpenRound.cpp` (0.673 mm/count; 248.8 ticks/rev over a 5.2 cm wheel) and **`31.933 ticks/cm`** in `ObstacleRound.cpp` / `hardware_config.h` (0.313 mm/count, earlier build).
 * **Why Use Linear Regression**: Dividing distance by tick count on a single run bakes in acceleration ramp and stopping coast errors. By measuring across six distances ($25, 50, 75, 100, 150, 200\text{ cm}$), the startup/stopping errors isolate into the regression intercept, leaving the slope clean:
-  $$\text{ticks} = m \cdot \text{distance} + c \implies \text{TICKS\_PER\_CM} = m$$
+  ```math
+  \text{ticks} = m \cdot \text{distance} + c \implies \text{TICKS\_PER\_CM} = m
+  ```
 * **Apparatus**: Minimum 2 meters of authentic competition mat with high-precision tape measure.
 * **Validation Criteria**: Coefficient of determination $R^2 > 0.999$. Lower values indicate tire slip or imprecise sighting.
 
@@ -77,7 +79,9 @@ flowchart LR
 * **Objective**: Eliminate instantaneous steering snap to protect gears and prevent traction loss.
 * **Current Value**: **`2.5 deg/cycle`**.
 * **Physics of Jerk**:
-  $$\text{jerk} = \frac{d^3\theta}{dt^3} = \frac{d}{dt}(\text{yaw acceleration})$$
+  ```math
+  \text{jerk} = \frac{d^3\theta}{dt^3} = \frac{d}{dt}(\text{yaw acceleration})
+  ```
   High yaw jerk breaks rear tire static friction on slick vinyl mats, inducing wheel scrub and corrupting encoder odometry.
 * **Procedure**: Run the vehicle at competition speed into a $25^\circ$ step turn with slew limits ranging from $0$ (unlimited) to $5.0^\circ/\text{cycle}$.
 * **Selection**: Select the "knee" on the jerk vs. slew curve where jerk drops substantially without making the corner entry sluggish ($< 300\text{ ms}$ settling time).
@@ -122,9 +126,15 @@ flowchart LR
 * **Objective**: Tune the proportional eased cornering controller.
 * **Current Values** (both programs): `TURN_KP = 2.5`, `TURN_KV = 3.5`, `TURN_MIN_STEER = 8°`, `TURN_MAX_STEER = 55°`, `TURN_STOP_DEG = 0.3°`, `TURN_MIN_PWM = 100`, `TURN_MAX_PWM = 130`.
 * **Control Law**:
-  $$\text{error} = \theta_{\text{target}} - \theta_{\text{current}}$$
-  $$\text{steer} = \text{clamp}(K_{p,\text{turn}} \cdot |\text{error}|,\; \text{TURN\_MIN\_STEER},\; \text{TURN\_MAX\_STEER})$$
-  $$\text{pwm} = \text{clamp}(K_{v,\text{turn}} \cdot |\text{error}|,\; \text{TURN\_MIN\_PWM},\; \text{TURN\_MAX\_PWM})$$
+  ```math
+  \text{error} = \theta_{\text{target}} - \theta_{\text{current}}
+  ```
+  ```math
+  \text{steer} = \text{clamp}(K_{p,\text{turn}} \cdot |\text{error}|,\; \text{TURN\_MIN\_STEER},\; \text{TURN\_MAX\_STEER})
+  ```
+  ```math
+  \text{pwm} = \text{clamp}(K_{v,\text{turn}} \cdot |\text{error}|,\; \text{TURN\_MIN\_PWM},\; \text{TURN\_MAX\_PWM})
+  ```
 * **Validation**: Run 30 consecutive alternating turns (15 left, 15 right). Final heading error standard deviation must stay under $1.5^\circ$. If left and right errors diverge systematically, re-run Step 4.
 
 ---
