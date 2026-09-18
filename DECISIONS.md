@@ -2,6 +2,13 @@
 
 One line per locked decision + the REASON. Source of truth; append as things lock.
 
+> **Note (2026-09-18):** the September rebuild changed several things without new numbered
+> entries: steering is now an **Ackermann linkage** (supersedes #15's parallelogram and #5's
+> rejection), the servo is a **JX PS-1171MG** digital servo (the MG996R analog 50 Hz notes no
+> longer apply), the race IMU is a **BNO085** (closes #24's procurement flag), and the carrier
+> was re-pinned. These are recorded in [`docs/timeline.md`](docs/timeline.md#2-rebuild-for-the-asia-pacific-championship-hyderabad-india)
+> and should get their own dated entries here.
+
 1. **Nav = gyro heading-hold, 90° turns terminated by IMU, re-reference heading at every corner** — turn ends on measured heading not steering angle, so tyre slip can't corrupt it; re-referencing bounds gyro drift. Mirrors the previous BD national winner (fastest + smoothest).
 
    - **AMENDED — 2026-07-26 (as-built).** Turn trigger is now the **TCS34725 floor colour sensor**, not the front wall distance. Corner lines are 20 mm thick (rule 13.9); at the as-built 0.70 m/s a line is under the sensor for 28.6 ms, giving ~11 samples at 2.4 ms integration. Front ToF is DEMOTED to confirmation/anti-collision only. Two additions are mandatory and were not in the original decision: (a) **event lockout** — each corner is marked by an orange line AND a blue line, so a naive "saw colour" trigger fires ~24 times over 3 laps instead of 12; all colour input must be ignored from the moment a turn starts until the turn completes and the car has driven clear; (b) **direction decode** — the driving direction is drawn randomly before each round (rule 9.3), so the ORDER of the first line pair (orange-then-blue vs blue-then-orange) sets the turn direction for all 12 turns. Without (b), 50% of runs steer the wrong way. The IMU-terminated 90° turn and per-corner heading re-reference are UNCHANGED and remain the core of the decision.
@@ -101,5 +108,5 @@ One line per locked decision + the REASON. Source of truth; append as things loc
 
 29. **Obstacle Challenge Compute & Sensing Upgrade: Raspberry Pi 5 (8GB) + Slamtec RPLIDAR C1 (360° DTOF) + 160° FOV Fisheye Camera. SUPERSEDES Decision #7's LIDAR deferral and upgrades the SBC** — Decision #7 originally deferred LIDAR because rotating LIDAR units were heavy, bulky, and running concurrent SLAM and vision on a low-spec SBC introduced CPU starvation and Linux OS jitter. The release of the **Slamtec RPLIDAR C1** (DTOF technology, compact 55.6 × 59.8 × 41.3 mm footprint, ~110 g, up to 12 m range with immunity to indoor lighting) fundamentally alters this trade-off. Paired with the **Raspberry Pi 5 (8GB)** (Quad-core Cortex-A76 @ 2.4 GHz), the high-level stack now has ample headroom to run concurrent 360° 2D laser scan clustering alongside the 160° FOV fisheye camera color segmentation pipeline.
     - **Power delivery impact:** The Pi 5 and RPLIDAR C1 require a dedicated high-current supply. The SBC buck regulator (BEC-C) is upgraded from 5.1V 3A to **5.0V/5.1V 5A** to ensure the Pi 5 does not throttle or limit USB peripheral power.
-    - **Safety architecture maintained:** The core premise of Decision #2 remains unaltered: the STM32 remains the deterministic, real-time master of vehicle safety and execution. The Pi 5 passes advisory obstacle vectors and clearance boundaries over checksummed UART; if the Pi 5 drops frames or suffers an OS freeze, the STM32 defaults instantly to wall-following safe navigation.
+    - **Safety architecture maintained:** The core premise of Decision #2 remains unaltered: the STM32 remains the deterministic, real-time master of vehicle safety and execution. The Pi 5 passes advisory obstacle vectors and clearance boundaries over checksummed UART; if the Pi 5 drops frames or suffers an OS freeze, the STM32 ignores vision older than 250 ms and carries on with its own heading-hold navigation (no avoidance).
 

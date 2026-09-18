@@ -12,8 +12,8 @@
 | [1. False Wall Reports on Open Track](#1-the-car-reports-a-wall-that-is-not-there) | White floor reflection clipping ToF beam | Fit collimator snouts + $+2.0^\circ$ wedge; filter `SIGNAL_MIN_MCPS` |
 | [2. Heading Drifts Over 3 Laps](#2-heading-drifts-over-a-run) | Gyro integration drift / turn overshoot bias | Swap to BNO085; calibrate `TURN_KP` and `SERVO_TRUE_STRAIGHT` |
 | [3. Double Turn / 180° Spin at Corner](#3-the-car-turns-twice-at-one-corner) | Sensor re-crossing corner lines on exit | Increase `POST_CORNER_LOCKOUT_CM` to $50\text{ cm}$ |
-| [4. Wrong-Way Turn After Avoidance](#4-after-avoiding-a-pillar-the-next-corner-goes-the-wrong-way) | Avoidance routine overriding corner trigger | Enforce absolute corner turn priority in FSM |
-| [5. Wheel Squeal & Wide Corner Exits](#5-the-car-squeals-in-corners-and-runs-wide) | Equal-angle steering scrub | Upgrade to true 100% Ackermann linkage |
+| [4. Wrong-Way Turn After Avoidance](#4-after-avoiding-a-pillar-the-next-corner-goes-the-wrong-way) | Avoidance started too close to a corner | Don't start avoidance once a corner is armed and the wall is close |
+| [5. Wheel Squeal & Wide Corner Exits](#5-the-car-squeals-in-corners-and-runs-wide) | Equal-angle steering scrub | Upgrade to an Ackermann linkage |
 | [6. Odometry Drifts Across Sessions](#6-distance-readings-drift-over-the-session) | Loose coupler or unloaded calibration | Tighten motor grub screws; calibrate with battery and lid fitted |
 | [7. Phantom Red Obstacles in Vision](#7-the-camera-sees-red-where-there-is-no-red) | Ambient light shifting orange lines into red | Re-tune color bounds in arena; raise `min_blob_area` |
 | [8. Camera Device Busy / Fails to Open](#8-camera-will-not-open) | Two processes competing for `/dev/video0` | Enable systemd service conflict masking |
@@ -26,10 +26,10 @@
 
 ### 1. The Car Reports a Wall That Is Not There
 * **Symptom**: Front or side ToF distance suddenly drops to $150\text{–}300\text{ mm}$ while cruising down an open straight, triggering an early turn or emergency brake.
-* **Root Cause**: The reflective white vinyl mat reflects 940 nm infrared light far more strongly than matte black perimeter walls. Any vehicle pitch or nose-down rake ($1.04^\circ$) dips the lower cone of the VL53L1X into the floor.
+* **Root Cause**: The white mat reflects the sensor's 940 nm infrared far more strongly than the matte black walls. The chassis nose-down rake ($\approx 0.84^\circ$ at the CAD wheelbase) dips the lower edge of the ToF cone into the floor.
 * **Fix**:
   1. Fit 3D-printed $2.5 \times 10 \times 20\text{ mm}$ slot collimator snouts and $+2.0^\circ$ upward wedges ([`docs/engineering_findings.md`](engineering_findings.md#1-floor-ir-crosstalk-and-optical-collimation)).
-  2. In firmware, enforce photon rate filtering: discard returns where signal rate exceeds `SIGNAL_MIN_MCPS` ($4.0\text{ MCPS}$).
+  2. In firmware, filter on signal rate (`SIGNAL_MIN_MCPS` = 4.0 MCPS, obstacle program). Note the open question in [calibration step 5](calibration.md#6-step-5-tof-floor-signal-threshold-signal_min_mcps) about whether this should reject weak or strong returns.
 
 ---
 
@@ -51,8 +51,8 @@
 
 ### 4. After Avoiding a Pillar, the Next Corner Goes the Wrong Way
 * **Symptom**: Runs without obstacles complete 12 corners flawlessly. When avoiding an obstacle on the straight leading into a corner, the car turns the opposite direction.
-* **Root Cause**: The multi-phase avoidance sub-machine was still executing its realignment phase and held a steering offset when the corner trigger fired.
-* **Fix**: Assign **absolute hierarchy priority** to corner turns. If a corner trigger fires, immediately terminate the avoidance state machine and execute the turn. Missing a pillar loses points; missing a corner ends the run.
+* **Root Cause**: The avoidance sub-machine was started just before a corner and still held a steering offset when the car reached the corner.
+* **Fix**: Give corners priority. `ObstacleRound.cpp` evaluates the turn triggers first and does not enter `STATE_AVOID` once a corner line has armed the turn and the front wall is within `FRONT_TURN_MM`. Missing a pillar loses points; missing a corner ends the run.
 
 ---
 
@@ -60,7 +60,7 @@
 * **Symptom**: Audible tire scrub through corners, rubber scuff marks on the mat, wide corner exits, and inconsistent heading changes run-to-run.
 * **Root Cause**: Parallelogram steering linkages force both wheels to identical steering angles. In a tight corner, the inner wheel needs a significantly tighter radius than the outer wheel; the difference forces the tires to scrub laterally.
 * **Second-Order Effect**: Slipping tires cause the drive axle encoder to over-read, corrupting the lane-gap odometry correction.
-* **Fix**: Upgrade to a true 100% Ackermann linkage where knuckle horn axes intersect at the center of the rear axle ([`docs/engineering_findings.md`](engineering_findings.md#3-evolution-of-three-steering-geometries)).
+* **Fix**: Upgrade to an Ackermann linkage where the steering-arm lines meet near the centre of the rear axle ([`docs/engineering_findings.md`](engineering_findings.md#3-evolution-of-three-steering-geometries)).
 
 ---
 
@@ -83,17 +83,18 @@
 ### 8. Camera Will Not Open
 * **Symptom**: `CameraThread` crashes with a device busy error or V4L2 resource allocation failure upon startup.
 * **Root Cause**: Linux allows only one process to hold `/dev/video0`. If the calibration dashboard (`dashboard.py`) is running in the background, the autonomous runner (`main.py`) cannot access the camera.
-* **Fix**: Define systemd service mutual exclusion:
+* **Fix**: Run only one of the two at a time. [`robodash.service`](../src/pi/robodash.service) declares systemd mutual exclusion:
   ```ini
   [Unit]
-  Description=RoboDash Tuning Dashboard
+  Description=Perception calibration dashboard
   Conflicts=robot.service
   ```
+  (This only helps once `main.py` is also installed as `robot.service`; that unit file is not in the repository yet.)
 
 ---
 
 ### 9. Servo Browns Out the MCU
-* **Symptom**: The STM32 microcontroller randomly resets during sudden steering transitions, dropping back into `STATE_INIT`.
+* **Symptom**: The STM32 randomly resets during sudden steering transitions and restarts from boot (`setup()`).
 * **Root Cause**: Rapid servo actuation draws instantaneous current spikes of up to $2.5\text{A}$, causing voltage sags on shared power rails.
 * **Fix**:
   1. Power the steering servo from a dedicated $6.0\text{V}$, $3\text{A}$ buck regulator with a $470\,\mu\text{F}$ low-ESR capacitor at the servo plug.

@@ -1,6 +1,6 @@
-﻿# v-photos
+# v-photos
 
-Vehicle photos, as required by WRO. Add six images showing the car from every side:
+Vehicle photos, as required by WRO. **Not added yet.** Add six images showing the car from every side:
 
 | File | View |
 |---|---|
