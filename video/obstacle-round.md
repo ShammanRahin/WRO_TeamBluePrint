@@ -1,4 +1,4 @@
-﻿# Obstacle Challenge - driving demonstration
+# Obstacle Challenge - driving demonstration
 
 Video: https://www.youtube.com/watch?v=ZjexvNc6L4U
 
@@ -8,4 +8,5 @@ avoidance: red pillars on the right, green on the left, swerving to a distance s
 pillar position, holding until the colour clears, and returning to centre. The front-proximity
 failsafe handles near-misses.
 
-Firmware: ../src/obstacle_round/ObstacleRound.cpp  Â·  Vision: ../src/vision/main.py
+Firmware: [`../src/obstacle_round/ObstacleRound.cpp`](../src/obstacle_round/ObstacleRound.cpp) ·
+Vision: [`../src/pi/main.py`](../src/pi/main.py)

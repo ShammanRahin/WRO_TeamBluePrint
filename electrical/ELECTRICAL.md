@@ -1,9 +1,16 @@
 # ELECTRICAL — WRO Future Engineers 2026, Team Blueprint
 
 **Revised 2026-07-28.** Supersedes the 2026-07-26 revision.
-Wiring diagram: **`schemes/wiring_block_diagram.png`** · Block diagram:
-`schemes/wiring_block_diagram.png` · Solvers: `electrical/collimator.py`,
-`src/sim/geometry_sweep.py` · Fab constraints: `electrical/DESIGN_RULES.md`
+Block diagram: `schemes/wiring_block_diagram.png` (2026-07-26, out of date) ·
+Solvers: `electrical/collimator.py`, `src/sim/geometry_sweep.py` · Fab constraints:
+`electrical/DESIGN_RULES.md`
+
+> **Status (2026-09-18): this is the July design record, kept for its reasoning.** Parts of it
+> have since been superseded by the build: the competition IMU is a **BNO085** (on hand, SPI);
+> the servo is a **JX PS-1171MG** digital servo, not the MG996R; the SBC is a **Raspberry Pi 5**
+> with an RPLIDAR C1 on a 5.1 V / 5 A rail, not a Pi 4B; the MPU6050 bench IMU and the
+> five-ToF F/FL30/FR30/L90/R90 layout are no longer used; and the carrier was re-pinned in
+> September. The current pin maps are in [`README.md`](README.md#pin-map-stm32f411).
 
 Rule references are to `WRO2026FutureEngineersSelfDrivingCarsGeneralRules.pdf`.
 
@@ -16,7 +23,7 @@ Rule references are to `WRO2026FutureEngineersSelfDrivingCarsGeneralRules.pdf`.
 | Physical build | One mainboard | **Two stacked single-sided boards** | #25 |
 | Fuse | 10 A inline | **Omitted — accepted risk** | #26 |
 | Connectors | JST-XH and JST-PH | **JST-XH only** — PH is not manufacturable at our fab | #27 |
-| Steering lock | ±35° | **±40°** | #28 |
+| Steering lock | ±35° | ~~±40°~~ **withdrawn the same day — stays ±35°** | #28 |
 
 The XSHUT enumeration sequence, its 2.8 V open-drain handling, and the volatile-address
 brownout problem are all **deleted, not moved** — the mux removes the entire failure mode.

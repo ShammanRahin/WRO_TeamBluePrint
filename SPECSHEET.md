@@ -1,9 +1,22 @@
 # SPECSHEET — WRO Future Engineers 2026
 
-**Team:** Blueprint · **National competition: 20 August 2026** · International: October 2026
-**Status:** Vehicle built; electronics in PCB design. Iterating on the real mat through August.
-This file is a SOURCE OF TRUTH. Update it as decisions lock.
-**Revised 2026-07-28** — steering lock, I²C topology, IMU and electrical build all changed;
+**Team:** Blueprint · **National competition: 20 August 2026 — won** · International: WRO Open Championship Asia Pacific, Hyderabad, 25–27 September 2026
+**Status (2026-09-18):** Vehicle built and rebuilt for the Asia Pacific event. Sections 3 (geometry) and 1–2 (rules) are current. Several later sections are the **July design record** and have been superseded by the build — each is marked below. Where this file disagrees with the firmware, the firmware is what runs.
+
+### Current as-built summary (2026-09-18)
+
+| Item | As built now | Superseded entry below |
+|---|---|---|
+| Steering | Ackermann linkage, 107° / 73° arms, ±35° lock, R = 194.4 mm | §7 (parallelogram) |
+| Servo | JX PS-1171MG digital metal-gear | §7, §11 (MG996R, analog 50 Hz ceiling) |
+| IMU | BNO085 on SPI, game rotation vector ~100 Hz | §8 (MPU6050 bench / IMU not ordered) |
+| I²C | TCA9548A mux; Open fw: 1× VL53L0X front (ch 3) + TCS34725 (ch 4); Obstacle fw: 3× VL53L1X L/R/F (ch 1/3/4) + TCS34725 | §8 (5× VL53L0X F/FL30/FR30/L90/R90, MPU6050 on ch 7) |
+| SBC | Raspberry Pi 5 (8 GB) + RPLIDAR C1 + 160° fisheye, 5.1 V / 5 A rail | §11 (Pi 4B, 3 A) |
+| Odometry | Measured `TICKS_PER_CM`: 14.853 (Open fw, current car), 31.933 (Obstacle fw, earlier build) | §4 (0.175 mm/count derivation) |
+| Open-round logic | See [`docs/control_architecture.md`](docs/control_architecture.md) | §5 state list |
+| Pin map | See [`electrical/README.md`](electrical/README.md#pin-map-stm32f411) | — |
+
+*Revised 2026-07-28* — steering lock, I²C topology, IMU and electrical build all changed;
 see Decisions #23–#28.
 
 ---
@@ -24,7 +37,7 @@ see Decisions #23–#28.
 ## 2. Scoring model (122 total)
 
 - ~75% driving, ~25% engineering journal.
-- Parking = 15 pts; +7 pts for starting inside the lot.
+- Parking = 15 pts; +7 pts for starting inside the lot. (Not yet implemented in firmware.)
 - **Strategy: full parallel park.**
 - Commit deadlines (gated): 1st commit ≥ 2 months pre-comp (≥ 1/5 of code), 2nd ≥ 1 month, and the **≥ 2-weeks-before commit is the one judges score**. README ≥ 5000 chars.
 
@@ -45,7 +58,7 @@ see Decisions #23–#28.
 | **Wheelbase (front axle to rear axle)** | **136.14 mm** | CAD measured: 136.139 mm axle-to-axle, 136.126 mm rim-to-rim |
 | Front wheel dia | **46 mm** | |
 | Rear wheel dia | **50 mm** | drives odometry |
-| Steering mechanism | **True 100% Ackermann** | arms angled at 107.0° / 73.0° (17.0° inclination) |
+| Steering mechanism | **Ackermann** | arms angled at 107.0° / 73.0° (17.0° inclination) |
 | Steering lock | **+/-35 deg** | measured at knuckles. **Final.** |
 | **Turn radius R** | **194.4 mm** | 136.14 / tan 35 deg |
 | Car height (current) | **50 mm** | will grow to ~75-90 mm with Pi 5 + RPLIDAR C1 stack |
@@ -53,13 +66,18 @@ see Decisions #23–#28.
 
 **Scored footprint 165 x 114.2 mm** — well inside the 300 x 200 mm limit.
 
+> ⚠️ **Open inconsistency:** a 136.14 mm wheelbase with 46/50 mm wheels needs at least
+> 136.14 + 23 + 25 ≈ 184 mm of length, more than the 165 mm body length. `src/sim/park_feasibility.py`
+> therefore rejects `--wheelbase 136.14`. Either the wheels overhang the scored body length or one
+> of the figures is wrong — re-measure and record which.
+
 ### Turn radius & Kinematics — CAD VERIFIED (2026-09-15)
 
 `R = wheelbase / tan(lock) = 136.14 / tan(35 deg) = **194.4 mm**`
 
 Ackermann geometry condition:
 $$\alpha = \arctan\left(\frac{K_w / 2}{L}\right) = \arctan\left(\frac{80.589 / 2}{136.139}\right) = \arctan(0.29597) = 16.49^\circ \approx 16.5^\circ$$
-The CAD knuckle steering arms are set at **107.0° / 73.0°** ($17.0^\circ$ relative to the longitudinal axis), matching the theoretical Ackermann convergence directly at the rear axle center.
+The CAD knuckle steering arms are set at **107.0° / 73.0°** ($17.0^\circ$ relative to the longitudinal axis), within $0.5^\circ$ of the ideal Ackermann convergence at the rear axle centre.
 
 ### Chassis rake — verified from CAD
 Front 46 mm vs rear 50 mm = 2 mm axle height difference over the 136.14 mm wheelbase:
@@ -71,19 +89,20 @@ Bay = 1.5 x 165 = **247.5 mm** -> total longitudinal slack **82.5 mm**.
 Limiters are 200 x 20 x 100 mm and the car is 50-90 mm tall, so the car **cannot pass
 over them** at any point in the manoeuvre.
 
-`src/sim/park_feasibility.py` (WB **110 mm confirmed 2026-07-28**) sweeps the parked
+`src/sim/park_feasibility.py` (run at the July WB of **110 mm**; see the wheelbase note above) sweeps the parked
 longitudinal position — the only free variable in a symmetric two-arc — and finds:
 
 | Lock | R | R/L | Best clearance | Verdict |
 |---|---|---|---|---|
 | **35 deg (as built, FINAL)** | **157 mm** | **0.95** | **-25.6 mm** | **COLLISION** |
 | 40 deg | 131 mm | 0.79 | -10.8 mm | COLLISION — considered and withdrawn |
-| 45 deg | 110 mm | 0.67 | +0.1 mm | clears by nothing |
+| 45 deg | 110 mm | 0.67 | 0.0 mm | touches — no margin |
 | 60 deg | 64 mm | 0.38 | +0.5 mm | clears by nothing |
 
 The 40 and 45 deg rows are kept because they are the evidence that raising the lock does
-not solve this. 40 deg still collides; 45 deg clears by 0.1 mm, which on an open-loop
-steering system is not clearance.
+not solve this. 40 deg still collides; 45 deg only just touches (reported as +0.1 mm in July,
+0.0 mm by the current solver), which on an open-loop steering system is not clearance.
+At the CAD wheelbase R rises to 194.4 mm, which makes the two-arc park worse, not better.
 
 The front-outer corner sweeps into the entry limiter at ~37 deg heading while the rear
 axle is still 164 mm along the bay.
@@ -98,7 +117,7 @@ against **IMU yaw** to straighten. Slower, but robust to R error — which matte
 steering is open-loop (Decision #16) and nominal R cannot be trusted. Validate on the mat.
 Touching a limiter = 0 parking points (rule 9.24.7); parking is 22 of 122 points.
 
-## 4. Drivetrain / motor - AS BUILT
+## 4. Drivetrain / motor - AS BUILT (July; see odometry note)
 
 - **Motor:** 25GA, 1331 RPM, 180 counts/rev, encoder on the motor.
 - **Reduction:** **5:1 gear meshed to the solid rear axle** (Decision #14 confirmation).
@@ -119,6 +138,12 @@ FLAG - OPEN QUESTION #1, open since 2026-07-12: the hand-rotate test has still n
 done. If 180 turns out to be per WHEEL rev the constant is 5x coarser (0.87 mm/count).
 Everything else in this file is independent of the answer; only this constant changes.
 
+> **Measured since (calibration step 2):** the firmware constants are **31.933 ticks/cm =
+> 0.313 mm/count** (earlier build, `ObstacleRound.cpp`) and **14.853 ticks/cm = 0.673 mm/count**
+> (current car, `OpenRound.cpp`, 248.8 ticks/rev over a 5.2 cm wheel). Neither matches the
+> 0.175 mm/count derived here, so the 180 counts/rev assumption above does not hold for the
+> encoder as wired. Use the measured values.
+
 **Why the 5:1 is the highest-value decision in the build:** ungeared, the car ran at
 2.79 m/s with 0.70 mm/count and a 7.2 ms line-detection window. Geared, it runs at
 0.70 m/s with 0.175 mm/count and a 28.6 ms window. It converted three separate problems
@@ -127,7 +152,7 @@ Everything else in this file is independent of the answer; only this constant ch
 **Closed-loop speed control on the encoder is mandatory** - see Decision #22 (BTS7960
 has poor resolution at the ~14% duty that parking needs).
 
-## 5. Navigation strategy - AS BUILT
+## 5. Navigation strategy - July design (current logic: [`docs/control_architecture.md`](docs/control_architecture.md))
 
 Core (unchanged from Decision #1): gyro heading-hold on straights, 90 deg turns
 **terminated by IMU** (not by steering angle, so tyre slip cannot corrupt them),
@@ -166,14 +191,17 @@ straight; this matters more now that steering is open-loop (Decision #16).
 
 ## 6. Compute split
 
-- **Open round:** STM32 only (ToF/IR/sonar + IMU + encoder). Fully deterministic, NO Pi in the loop.
+- **Open round:** STM32 only (ToF + floor colour + IMU + encoder). Fully deterministic, NO Pi in the loop.
 - **Obstacle round:** adds **Raspberry Pi 5 (8 GB)** + **Slamtec RPLIDAR C1 (360° DTOF)** + **160° FOV fisheye camera** for 2D obstacle mapping, pillar classification, and clearance geometry.
-- Inter-board link = **checksummed UART**. NEVER inter-board I2C.
-- STM32 chosen over ESP32: clean 12-bit ADC (Sharp IR is analog), hardware quadrature encoder timers, deterministic timing (no WiFi stack stealing cycles).
+- Inter-board link = **UART** (a checksum was planned; the current `V,…` frame has none). NEVER inter-board I2C.
+- STM32 chosen over ESP32: clean 12-bit ADC (for the Sharp IR fallback), hardware quadrature encoder timers, deterministic timing (no WiFi stack stealing cycles).
 
-## 7. Steering - AS BUILT
+## 7. Steering - July build (SUPERSEDED)
 
-> **SUPERSEDES** the 2026-07-12 "single central pivot + AS5600" specification.
+> **SUPERSEDED 2026-09** by the Ackermann linkage and JX PS-1171MG digital servo — see §3 and
+> [`docs/engineering_findings.md`](docs/engineering_findings.md#3-evolution-of-three-steering-geometries).
+> Kept for the reasoning. (This section itself superseded the 2026-07-12 "single central pivot +
+> AS5600" specification.)
 
 - **Parallelogram (equal-angle tie-bar) linkage.** Measured lock **+/-35 deg**.
 - **Servo: MG996R** - metal-gear, **analog**. Commanded in microseconds
@@ -196,7 +224,7 @@ modelled swept envelope, which is why it ranked parallel bell-crank as dominated
 **Costs accepted:** 4+ joints vs 1; no steering feedback; equal-angle scrub unchanged
 (parallelogram is NOT Ackermann); turn radius nominal rather than measured.
 
-## 8. Sensors - AS BUILT
+## 8. Sensors - July design (partly SUPERSEDED — see the summary table at the top)
 
 > **REVISED 2026-07-28 & 2026-09-05 (Decisions #23, #24, #29).** XSHUT address reassignment is replaced by a
 > **PCA9548A multiplexer** — one sensor per channel, every device at its factory 0x29, five
@@ -289,9 +317,11 @@ is still unrecorded in `BOM.md` (Open Question #3).
 - Nerdvana Taurus 2025 — github.com/andreipopescufilimon/WRO2025_Future_Engineers (best mechanical/steering docs; restrictive licence — study, re-model, do NOT reuse files)
 - Official archive of all 64 finalist repos — WRO-Association fe-2025-links
 
-## 11. Electrical architecture
+## 11. Electrical architecture - July design
 
-Full detail: `electrical/ELECTRICAL.md`. Block diagram: `schemes/wiring_block_diagram.png`.
+Full detail: `electrical/ELECTRICAL.md`. Block diagram: `schemes/wiring_block_diagram.png` (dated 2026-07-26).
+The Pi 4B / MG996R / MPU6050 figures below are superseded by the Pi 5 + RPLIDAR C1 (5.1 V / 5 A
+rail), the JX PS-1171MG and the BNO085.
 
 ### Power domains - ONE master switch (rule 9.10)
 ```

@@ -1,7 +1,10 @@
-﻿# electrical
+# electrical
 
 The wiring, power distribution, and board design of the car. The connection diagram lives in
-`../schemes/`; this file explains the reasoning a diagram cannot.
+[`../schemes/`](../schemes/) (currently out of date — see its README); this file explains the
+reasoning a diagram cannot. The full design record is [`ELECTRICAL.md`](ELECTRICAL.md), fab
+rules are in [`DESIGN_RULES.md`](DESIGN_RULES.md), and the ToF collimator solver is
+[`collimator.py`](collimator.py).
 
 ## Two stacked single-sided PCBs
 
@@ -21,27 +24,35 @@ The wiring, power distribution, and board design of the car. The connection diag
 | Rail | Feeds | Why separate |
 |---|---|---|
 | Motor | BTS7960 -> 25GA -> 5:1 -> solid rear axle | Motor noise/brown-out stays off logic |
-| 6.0 V | Steering servo only | MG996R current spikes correlate with steering; isolate them |
+| 6.0 V | Steering servo only (JX PS-1171MG) | Servo current spikes correlate with steering; isolate them |
 | 5.0 V | STM32 logic + sensor bus (local 3.3 V regulator) | Clean supply for the MCU and sensors |
-| 5.1 V | Raspberry Pi 4B | Obstacle round only; unplugged for the open round |
+| 5.1 V, 5 A | Raspberry Pi 5 + RPLIDAR C1 | Obstacle round only; unplugged for the open round |
 
 Bulk capacitance on the motor rail, local decoupling at every IC, ceramics across the motor
-terminals. Inline fuse on battery positive, upstream of everything. One master switch powers
-the car on; a separate momentary button (to PA5) starts the program.
+terminals. **No inline fuse** — an accepted risk, recorded in Decision #26. One master switch
+powers the car on; a separate momentary button starts the program.
 
 ## Pin map (STM32F411)
 
-| Function | Pin(s) | Notes |
+The carrier was re-pinned in September 2026. Only `src/open_round/OpenRound.cpp` uses the new
+map so far; `ObstacleRound.cpp`, `tools/calibration/hardware_config.h` and the older bench
+testers still use the earlier one.
+
+| Function | Current carrier (`OpenRound.cpp`) | Earlier map (`ObstacleRound.cpp`) |
 |---|---|---|
-| Motor (BTS7960) | PB9 RPWM, PB8 LPWM, PB1 EN | Speed sign selects direction |
-| Servo | PA8 | 1000-2000 us |
-| Start button | PA5 | INPUT_PULLUP, active-low |
-| Encoder (TIM3) | PA6, PA7 | Hardware quadrature |
-| IMU (SPI) | PB5 MOSI, PB4 MISO, PB3 SCK, PB0 CS, PB13 INT, PB14 RST | BNO085, dedicated bus |
-| I2C (to mux) | PB7 SDA, PB6 SCL | TCA9548A 0x70, 400 kHz |
-| ToF left/right/front | mux ch 1/3/4 | VL53L1X, all 0x29 |
-| Floor colour | mux (auto-detected) | TCS34725 0x29 |
-| Pi UART | PA9 TX, PA10 RX | 115200 8N1 |
+| Motor (BTS7960) | PA2 RPWM (fwd), PA3 LPWM (rev); EN tied high on board | PB9 RPWM, PB8 LPWM, PB1 EN |
+| Servo | PA8, 1000-2000 us | PA8, 1000-2000 us |
+| Start button | PB15 reserved, **not read yet** | PA5, INPUT_PULLUP, active-low |
+| Encoder | TIM5 on PA0 / PA1 | TIM3 on PA6 / PA7 |
+| IMU (BNO085, SPI) | PA5 SCK, PA6 MISO, PA7 MOSI, PA4 CS, PB0 INT, PB1 RST | PB3 SCK, PB4 MISO, PB5 MOSI, PB0 CS, PB13 INT, PB14 RST |
+| I2C (to mux) | PB6 SCL, PB7 SDA, PB8 mux reset; TCA9548A 0x70, 400 kHz | PB6 SCL, PB7 SDA; TCA9548A 0x70, 400 kHz |
+| ToF | VL53L0X front on mux ch 3 | VL53L1X left / right / front on mux ch 1 / 3 / 4 |
+| Floor colour | TCS34725 on mux ch 4 | TCS34725, channel auto-detected |
+| Status LEDs | PB12, PB13, PB14 | — |
+| Pi link | — (not used in the open round) | `Serial`, 115200 8N1 |
+
+Note that on the current map PA0 (encoder) is also the Black Pill's KEY button — don't press it
+while running.
 
 ## Wiring rules
 

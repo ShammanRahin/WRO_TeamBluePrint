@@ -1,4 +1,4 @@
-﻿# Video - driving demonstrations
+# Video - driving demonstrations
 
 Two demonstration videos, one per challenge.
 
@@ -7,4 +7,4 @@ Two demonstration videos, one per challenge.
 | Open Challenge | https://www.youtube.com/watch?v=Lr_X0RzbjXM |
 | Obstacle Challenge | https://www.youtube.com/watch?v=ZjexvNc6L4U |
 
-Details in open-round.md and obstacle-round.md.
+Details in [`open-round.md`](open-round.md) and [`obstacle-round.md`](obstacle-round.md).

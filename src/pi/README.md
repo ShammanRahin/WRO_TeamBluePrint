@@ -2,8 +2,8 @@
 
 Camera and lidar, fused, with a browser-based calibration dashboard.
 
-Architecture and reasoning: [main README, section 5](../../README.md#the-pi-perception-stack).
-Colour tuning procedure: [main README, section 8](../../README.md#pillar-colour-on-the-pi).
+Architecture and reasoning: [docs/control_architecture.md, section 9](../../docs/control_architecture.md#9-raspberry-pi-perception-stack-srcpi).
+Colour tuning procedure: [docs/calibration.md, section 10](../../docs/calibration.md#10-pillar-color-calibration-raspberry-pi-dashboard).
 
 ## Files
 
@@ -23,13 +23,14 @@ Colour tuning procedure: [main README, section 8](../../README.md#pillar-colour-
 Raspberry Pi OS Bookworm 64-bit.
 
 ```bash
-python3 -m venv ~/robo-env
+sudo apt install -y python3-picamera2            # camera stack comes from apt, not pip
+python3 -m venv --system-site-packages ~/robo-env
 source ~/robo-env/bin/activate
 pip install -r requirements.txt
 ```
 
-`picamera2` comes from the system packages, not pip — create the venv with
-`--system-site-packages` if you want it visible inside.
+`--system-site-packages` is required so the apt-installed `picamera2` is visible
+inside the venv.
 
 Check the lidar is where the code expects it (`/dev/ttyUSB0` at 460800 in
 `sensors/lidar.py`):
@@ -42,15 +43,20 @@ ls -l /dev/ttyUSB*
 
 ```bash
 python3 main.py         # robot: camera + lidar + fusion
-python3 dashboard.py    # calibration dashboard on :5000
+python3 dashboard.py    # calibration dashboard on http://<pi>:8080
 ```
 
 **Only one of these at a time.** Both want the camera. `robodash.service`
-declares `Conflicts=robot.service` so systemd enforces it.
+declares `Conflicts=robot.service`, so systemd enforces it once `main.py` is
+also installed as `robot.service` (that unit is not in the repo yet).
 
 ## Install the dashboard as a service
 
-Edit the paths and `User=` in `robodash.service` to match your Pi, then:
+The unit as committed assumes user `suntzu` and `dashboard.py` copied to
+`/home/suntzu`. Edit `User=`, `WorkingDirectory=`, `Environment=PATH` and
+`ExecStart=` to point at your checkout (e.g. `.../src/pi/dashboard.py` with
+`WorkingDirectory` set to `src/pi`, so `config.json`, `templates/` and
+`sensors/` are found), then:
 
 ```bash
 sudo cp robodash.service /etc/systemd/system/
@@ -70,7 +76,8 @@ Fixed in `worldstate.py`, enforced everywhere:
 
 ## Competition settings
 
-- Wi-Fi and Bluetooth disabled at boot in `config.txt`, per rule 11.10
+- Wi-Fi and Bluetooth disabled at boot in `/boot/firmware/config.txt`
+  (`dtoverlay=disable-wifi`, `dtoverlay=disable-bt`), per rule 11.10
 - Run the robot process, not the dashboard
 - The dashboard's MJPEG streams cost real CPU; they are for the pit only
 
@@ -83,3 +90,5 @@ Fixed in `worldstate.py`, enforced everywhere:
 - `MOUNT_OFFSET_DEG` is 0 and has not been verified against the physical mount.
 - `hfov_deg` is 62.0, which is a standard Pi camera figure, not a fisheye one.
   Confirm which lens is fitted.
+- Frames are 640 × 480, but the STM32's `DX_SPAN` assumes a 320 px frame —
+  scale `dx` when the sender is written.
