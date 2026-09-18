@@ -20,7 +20,7 @@
 
 ### 2026-07-26 — Major Mechanical & Sensor Architecture Pivot
 * Refer to [`journal/day-02-plan-revision-2026-07-26.md`](../journal/day-02-plan-revision-2026-07-26.md).
-* **Center Pivot Scrapped**: Rotating the whole front beam swings each front wheel fore/aft by $\pm 30.1\text{ mm}$, eating $36\%$ of parking-bay slack. The car was built with parallelogram (two-knuckle) steering instead.
+* **Center Pivot Scrapped**: Rotating the whole front beam swings each front wheel fore/aft by $\pm 30.1\text{ mm}$, eating 36% of parking-bay slack. The car was built with parallelogram (two-knuckle) steering instead.
 * **Magnetic Steering Encoder Deleted**: With manoeuvres terminating on gyro yaw, steering-angle feedback is not needed for navigation. Removed AS5600 encoder to reduce mass and bus complexity ([`DECISIONS.md` #16](../DECISIONS.md)).
 * **5:1 Drive Gear Reduction Added**: Reduced 25GA motor speed from $1331\text{ RPM}$ to $266\text{ RPM}$ ($0.70\text{ m/s}$ top speed), multiplying odometry resolution by 5 and giving a comfortable $28.6\text{ ms}$ sensor dwell over corner lines.
 

@@ -48,7 +48,7 @@ flowchart LR
   2. Slowly rotate the rear wheel forward by hand exactly one revolution until index marks meet.
   3. Record sample. Collect 100 consecutive rotations.
 * **Interpretation**:
-  * The running standard deviation must converge to $< 1\%$ of the mean.
+  * The running standard deviation must converge to < 1% of the mean.
   * A growing standard deviation indicates grub screw slippage or electrical noise on the encoder lines.
 
 ---
@@ -62,9 +62,7 @@ flowchart LR
 * **Objective**: Measure the real linear travel per encoder tick under competition load.
 * **Current Values**: **`14.853 ticks/cm`** in `OpenRound.cpp` (0.673 mm/count; 248.8 ticks/rev over a 5.2 cm wheel) and **`31.933 ticks/cm`** in `ObstacleRound.cpp` / `hardware_config.h` (0.313 mm/count, earlier build).
 * **Why Use Linear Regression**: Dividing distance by tick count on a single run bakes in acceleration ramp and stopping coast errors. By measuring across six distances ($25, 50, 75, 100, 150, 200\text{ cm}$), the startup/stopping errors isolate into the regression intercept, leaving the slope clean:
-  ```math
-  \text{ticks} = m \cdot \text{distance} + c \implies \text{TICKS\_PER\_CM} = m
-  ```
+  $$\text{ticks} = m \cdot \text{distance} + c \implies \text{TICKS PER CM} = m$$
 * **Apparatus**: Minimum 2 meters of authentic competition mat with high-precision tape measure.
 * **Validation Criteria**: Coefficient of determination $R^2 > 0.999$. Lower values indicate tire slip or imprecise sighting.
 
@@ -79,9 +77,7 @@ flowchart LR
 * **Objective**: Eliminate instantaneous steering snap to protect gears and prevent traction loss.
 * **Current Value**: **`2.5 deg/cycle`**.
 * **Physics of Jerk**:
-  ```math
-  \text{jerk} = \frac{d^3\theta}{dt^3} = \frac{d}{dt}(\text{yaw acceleration})
-  ```
+  $$\text{jerk} = \frac{d^3\theta}{dt^3} = \frac{d}{dt}(\text{yaw acceleration})$$
   High yaw jerk breaks rear tire static friction on slick vinyl mats, inducing wheel scrub and corrupting encoder odometry.
 * **Procedure**: Run the vehicle at competition speed into a $25^\circ$ step turn with slew limits ranging from $0$ (unlimited) to $5.0^\circ/\text{cycle}$.
 * **Selection**: Select the "knee" on the jerk vs. slew curve where jerk drops substantially without making the corner entry sluggish ($< 300\text{ ms}$ settling time).
@@ -126,15 +122,9 @@ flowchart LR
 * **Objective**: Tune the proportional eased cornering controller.
 * **Current Values** (both programs): `TURN_KP = 2.5`, `TURN_KV = 3.5`, `TURN_MIN_STEER = 8°`, `TURN_MAX_STEER = 55°`, `TURN_STOP_DEG = 0.3°`, `TURN_MIN_PWM = 100`, `TURN_MAX_PWM = 130`.
 * **Control Law**:
-  ```math
-  \text{error} = \theta_{\text{target}} - \theta_{\text{current}}
-  ```
-  ```math
-  \text{steer} = \text{clamp}(K_{p,\text{turn}} \cdot |\text{error}|,\; \text{TURN\_MIN\_STEER},\; \text{TURN\_MAX\_STEER})
-  ```
-  ```math
-  \text{pwm} = \text{clamp}(K_{v,\text{turn}} \cdot |\text{error}|,\; \text{TURN\_MIN\_PWM},\; \text{TURN\_MAX\_PWM})
-  ```
+  $$\text{error} = \theta_{\text{target}} - \theta_{\text{current}}$$
+  $$\text{steer} = \text{clamp}(K_{p,\text{turn}} \cdot |\text{error}|,\  \text{TURN MIN STEER},\  \text{TURN MAX STEER})$$
+  $$\text{pwm} = \text{clamp}(K_{v,\text{turn}} \cdot |\text{error}|,\  \text{TURN MIN PWM},\  \text{TURN MAX PWM})$$
 * **Validation**: Run 30 consecutive alternating turns (15 left, 15 right). Final heading error standard deviation must stay under $1.5^\circ$. If left and right errors diverge systematically, re-run Step 4.
 
 ---
@@ -149,7 +139,7 @@ flowchart LR
 * **Current Values**: **`HEAD_KP = 2.0`**, **`HEAD_KI = 0.0`**, **`HEAD_KD = 0.0`**, **`YAW_FILT_ALPHA = 0.35`**.
 * **Tuning Method**:
   1. Increment $K_p$ on a $4\text{-meter}$ straight until the vehicle visibly oscillates (snaking period $\approx 0.5\text{ s}$).
-  2. Reduce $K_p$ to $60\%$ of the oscillation onset gain.
+  2. Reduce $K_p$ to 60% of the oscillation onset gain.
   3. $K_i$ is kept at 0 (eliminates integral windup and prevents masking mechanical steering misalignment).
   4. $K_d$ is kept at 0 (it would act on the filtered yaw rate; the P term alone was sufficient).
 
@@ -166,13 +156,13 @@ flowchart LR
 
   | Class | `OpenRound.cpp` (Sept 2026, measured on the mat) | `ObstacleRound.cpp` (earlier) |
   |:---|:---|:---|
-  | ORANGE | $\%R > 52$ AND $\%B < 18$ | $\%R > 35$ AND $\%B < 27$ |
-  | BLUE | $\%B > 23$ AND $\%R < 40$ | $\%B > 36$ AND $\%R < 24$ |
+  | ORANGE | %R > 52 AND %B < 18 | %R > 35 AND %B < 27 |
+  | BLUE | %B > 23 AND %R < 40 | %B > 36 AND %R < 24 |
   | WHITE / none | neither rule matches, or $R+G+B < 100$ | neither rule matches |
 
-  Measured on the current car: white $\%R$ 47 / $\%B$ 19, orange 69 / 11, blue 36 / 27.
+  Measured on the current car: white %R 47 / %B 19, orange 69 / 11, blue 36 / 27.
 * **Bench tool**: the thresholds above were captured with the colour-capture version of `src/tools/bench/tof_test.ino` (commit `a6f685e`, guide in [`tof_color_sensor_routine.txt`](../src/tools/bench/tof_color_sensor_routine.txt)). That file has since been replaced by a three-ToF test; restore the old version from git history to re-measure.
-* **Why Use Channel Percentages**: Raw counts shift with LED brightness, sensor height and shadows. Normalised ratios ($\%R = R / (R+G+B)$) are largely insensitive to overall intensity.
+* **Why Use Channel Percentages**: Raw counts shift with LED brightness, sensor height and shadows. Normalised ratios (%R = R / (R+G+B)) are largely insensitive to overall intensity.
 * **Debounce Filter**: Line detection must hold for `COLOR_CONFIRM_MS = 6 ms` before triggering corner events.
 
 ---

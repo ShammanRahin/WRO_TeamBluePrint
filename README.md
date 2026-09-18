@@ -254,12 +254,8 @@ To correct lateral drift over 12 corners without relying on wall-following, we u
 * The distance travelled between crossing the first line and its partner line indicates the car's lateral position in the lane.
 * The gap measured at Corner 1 becomes the reference (`gapRefCm`; the default before it is learned is `GAP_THRESHOLD_CM` = 20 cm).
 * At every later corner:
-  ```math
-  \Delta\text{gap} = \text{measured\_gap} - \text{reference\_gap}
-  ```
-  ```math
-  \theta_{\text{offset}} = \min(4^\circ/\text{cm} \cdot |\Delta\text{gap}|,\; 30^\circ)
-  ```
+  $$\Delta\text{gap} = \text{measured gap} - \text{reference gap}$$
+  $$\theta_{\text{offset}} = \min(4^\circ/\text{cm} \cdot |\Delta\text{gap}|,\  30^\circ)$$
   If $|\Delta\text{gap}|$ is under the 2 cm deadband nothing is done. Otherwise the servo is held $\theta_{\text{offset}}$ off straight for $25\text{ cm}$ after the turn, then the car eases back onto the lane heading.
 
 ---
@@ -275,7 +271,7 @@ To correct lateral drift over 12 corners without relying on wall-following, we u
    * *Proof*: The rigid-body simulation ([`src/sim/park_feasibility.py`](src/sim/park_feasibility.py)) shows a symmetric two-arc reverse park **collides by $25.6\text{ mm}$** inside a $1.5 \times$ car-length bay at $35^\circ$ lock (run at the July wheelbase of $110\text{ mm}$). Because bay length scales with car length, shrinking the chassis does not help, and the longer CAD wheelbase only makes the turn radius larger.
    * *Solution*: A **multi-point shuffle manoeuvre** closed on IMU heading (planned; not yet in the firmware — the obstacle program currently has no parking phase).
 3. **Evolution of Three Steering Geometries**:
-   * *Attempt 1 (Centre Turntable Pivot)*: Scrapped; rotating the front beam moved each front tyre fore/aft by $\pm 30.1\text{ mm}$, eating $36\%$ of parking-bay slack.
+   * *Attempt 1 (Centre Turntable Pivot)*: Scrapped; rotating the front beam moved each front tyre fore/aft by $\pm 30.1\text{ mm}$, eating 36% of parking-bay slack.
    * *Attempt 2 (Parallelogram Tie-Bar)*: Fixed the swept envelope, but equal steering angles caused tyre scrub in turns.
    * *Attempt 3 (Ackermann Linkage)*: Steering-arm projections meet at the rear axle centre, so the front wheels roll with minimal scrub.
 
