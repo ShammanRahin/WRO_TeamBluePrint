@@ -118,6 +118,33 @@ Autonomous miniature racing in the WRO Future Engineers category requires solvin
   <img src="media/components/hardware_components.png" alt="Vehicle Hardware Architecture - Real Physical Components" width="100%"/>
 </p>
 
+### Vehicle Photographs (6 Required Perspectives)
+
+> Captured in full competition configuration with 3D-printed red chassis, obstacle round camera mast, and dual-tier compute platform. High-resolution source images are located in [`v-photos/`](v-photos/README.md).
+
+<table align="center">
+  <tr>
+    <th align="center">Front View</th>
+    <th align="center">Top View</th>
+    <th align="center">Back View</th>
+  </tr>
+  <tr>
+    <td align="center" width="33%"><a href="v-photos/front.jpg"><img src="v-photos/front.jpg" alt="Front View" width="280"/></a><br/><sub><b>Front</b>: Fisheye camera mount &amp; bumper</sub></td>
+    <td align="center" width="33%"><a href="v-photos/top.jpg"><img src="v-photos/top.jpg" alt="Top View" width="160"/></a><br/><sub><b>Top</b>: Chassis layout &amp; rear wing</sub></td>
+    <td align="center" width="33%"><a href="v-photos/back.jpg"><img src="v-photos/back.jpg" alt="Back View" width="280"/></a><br/><sub><b>Back</b>: Power regulator PCB &amp; drive axle</sub></td>
+  </tr>
+  <tr>
+    <th align="center">Left Side View</th>
+    <th align="center">Right Side View</th>
+    <th align="center">Bottom View</th>
+  </tr>
+  <tr>
+    <td align="center" width="33%"><a href="v-photos/left.jpg"><img src="v-photos/left.jpg" alt="Left Side View" width="280"/></a><br/><sub><b>Left</b>: Profile &amp; Ackermann steering</sub></td>
+    <td align="center" width="33%"><a href="v-photos/right.jpg"><img src="v-photos/right.jpg" alt="Right Side View" width="280"/></a><br/><sub><b>Right</b>: Wiring harness &amp; wheel hubs</sub></td>
+    <td align="center" width="33%"><a href="v-photos/bottom.jpg"><img src="v-photos/bottom.jpg" alt="Bottom View" width="280"/></a><br/><sub><b>Bottom</b>: TCS34725 floor sensor &amp; underbody</sub></td>
+  </tr>
+</table>
+
 ### As-Built System Specifications
 
 > **Two firmware generations are in this repository.** The Open Challenge program ([`src/open_round/OpenRound.cpp`](src/open_round/OpenRound.cpp), last changed 2026-09-17) runs on the re-pinned carrier board with a single front VL53L0X. The Obstacle Challenge program ([`src/obstacle_round/ObstacleRound.cpp`](src/obstacle_round/ObstacleRound.cpp)) and the calibration sketches still use the earlier pin map and three VL53L1X sensors. Where the two differ, both values are given below. See [Pin maps](#pin-maps) for details.
@@ -150,7 +177,7 @@ Autonomous miniature racing in the WRO Future Engineers category requires solvin
 * **Control Interfaces (Rules 9.10, 9.11)**: One master switch for power; a separate momentary start button.
   > ⚠️ **Open item:** the current Open round firmware does **not** read a start button yet — it starts after a fixed 5 s countdown (`START_DELAY_MS`, `BTN_START_PIN = PB15` is marked "not wired yet"). Rule 9.11 requires a start button, so this must be wired and enabled before competition. The Obstacle round firmware already waits for the button on PA5.
 * **Vehicle & Team Visuals**:
-  * Vehicle photos from all 6 angles: [`v-photos/`](v-photos/README.md) *(still to be added)*
+  * Vehicle photos from all 6 angles: [Section 3](#vehicle-photographs-6-required-perspectives) and [`v-photos/`](v-photos/README.md)
   * Official and informal team photos: [`t-photos/`](t-photos/README.md) *(still to be added)*
   * Driving demonstration videos: [`video/video.md`](video/video.md)
 
@@ -403,7 +430,7 @@ Self-audit against the **WRO Future Engineers 2026 General Rules** documentation
 | **Engineering Process Log** | **Done** | [`docs/timeline.md`](docs/timeline.md), [`DECISIONS.md`](DECISIONS.md), [`journal/`](journal/) |
 | **Electromechanical Schematics** | **Needs update** | [`schemes/`](schemes/) diagram is dated 2026-07-26 — see [Section 4](#4-system-architecture) |
 | **Driving Demonstration Videos** | **Done** | YouTube links in [`video/video.md`](video/video.md) |
-| **Vehicle Photos (All 6 Sides)** | **Missing** | [`v-photos/`](v-photos/README.md) contains only the instructions |
+| **Vehicle Photos (All 6 Sides)** | **Done** | Included in [Section 3](#vehicle-photographs-6-required-perspectives) and [`v-photos/`](v-photos/README.md) |
 | **Team Photos (Official & Funny)** | **Missing** | [`t-photos/`](t-photos/README.md) contains only the instructions |
 | **CAD Sources & Printable Models** | **Missing** | [`models/`](models/README.md) contains only the instructions |
 
