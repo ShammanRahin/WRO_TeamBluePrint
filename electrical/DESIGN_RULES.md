@@ -27,7 +27,7 @@ Design to the literal worst case and nothing at 2.54 mm pitch is manufacturable 
 |---|---|---|---|
 | Signal trace width | **0.6 mm** | 0.5 mm | 20% over minimum |
 | Power / rail trace | **1.5 mm** | — | Current + pad-lift resistance |
-| Servo power run | **2.5 mm** | — | ~3.5 A at 1 oz; see `SCHEMATIC.md` §1.6 |
+| Servo power run | **2.5 mm** | — | ~3.5 A at 1 oz |
 | Clearance (all) | **0.6 mm** | 0.5 mm | |
 | Trace to board edge | **1.0 mm** | 0.5 mm | Outline tolerance is ±1 mm |
 | Silk text height | **2.2 mm** | 2.03 mm (80 mil) | Arial Bold |
@@ -108,7 +108,7 @@ strictly worse and must be drawn deliberately.
 3. **Check the pour is actually continuous.** On a single layer, signal traces cut the
    pour into islands. Every island that isn't connected back to the star is a floating
    copper flag — an antenna, not a ground. Stitch islands with jumpers if you must.
-4. **One star point** (`SCHEMATIC.md` §1.2). Motor, servo and logic grounds meet there
+4. **One star point** (`ELECTRICAL.md` §2). Motor, servo and logic grounds meet there
    and nowhere else.
 5. Keep the ToF/I²C cable ground return away from the servo power run.
 
@@ -233,6 +233,6 @@ Per the agreed workflow, send at these three points:
 
 | Checkpoint | Send | Reviewed for |
 |---|---|---|
-| **1 — Schematic** | PDF export of both sheets | Netlist vs `SCHEMATIC.md`, pin map vs `PINMAP.md`, missing decoupling, pull-ups, star ground |
+| **1 — Schematic** | PDF export of both sheets | Netlist vs `ELECTRICAL.md`, pin map vs `electrical/README.md`, missing decoupling, pull-ups, star ground |
 | **2 — Placement** | Screenshot, modules placed, no routing | Jumper count implied by placement, module orientation, servo/motor run separation, board size vs chassis |
 | **3 — Routing + DRC** | DRC report + the three export PDFs | Rule violations, ground pour continuity and islands, trace widths on power, mirror and 1:1 scale |

@@ -6,4 +6,4 @@
 | [`bench/`](bench/) | Single-subsystem sketches used during bring-up |
 
 The calibration procedure itself — the rig, the method, how to read each
-result — is [section 8 of the main README](../../README.md#8-calibration).
+result — is in [`docs/calibration.md`](../../docs/calibration.md).

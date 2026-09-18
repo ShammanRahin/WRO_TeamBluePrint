@@ -25,7 +25,8 @@ flowchart LR
 * **Dashed boxes**: Independent steps that can be re-run at any time.
 
 ### Prerequisite Checklist
-* **Competition Weight**: All calibration must be conducted with the vehicle in full competition trim: 3S battery installed, body shell mounted, and camera mast secured. Tyre squash under real vehicle load significantly changes the effective rolling radius.
+* **Competition Weight**: All calibration must be conducted with the vehicle in full competition trim: 3S battery installed, body shell mounted, and camera mast secured. Tyre squash under real vehicle load changes the effective rolling radius.
+* **Pin map**: The calibration sketches use the *earlier* pin map in `hardware_config.h` (motor PB9/PB8, encoder TIM3 on PA6/PA7, IMU SPI on PB3–PB5). The current carrier used by `OpenRound.cpp` is re-pinned (motor PA2/PA3, encoder TIM5 on PA0/PA1, IMU SPI on PA5–PA7) — update `hardware_config.h` before running these sketches on it.
 * **Firmware Sketches**:
   * Standalone diagnostic sketches: [`src/tools/calibration/01_encoder_ticks_per_rev.cpp`](../src/tools/calibration/01_encoder_ticks_per_rev.cpp) through [`08_floor_colour_thresholds.cpp`](../src/tools/calibration/08_floor_colour_thresholds.cpp).
   * Pit menu runner: [`src/tools/calibration/CalibrationSuite.cpp`](../src/tools/calibration/CalibrationSuite.cpp) (flash once, select test via Serial monitor).
@@ -59,7 +60,7 @@ flowchart LR
 </p>
 
 * **Objective**: Measure the real linear travel per encoder tick under competition load.
-* **Current Value**: **`31.933 ticks/cm`** ($0.175\text{ mm/count}$).
+* **Current Values**: **`14.853 ticks/cm`** in `OpenRound.cpp` (0.673 mm/count; 248.8 ticks/rev over a 5.2 cm wheel) and **`31.933 ticks/cm`** in `ObstacleRound.cpp` / `hardware_config.h` (0.313 mm/count, earlier build).
 * **Why Use Linear Regression**: Dividing distance by tick count on a single run bakes in acceleration ramp and stopping coast errors. By measuring across six distances ($25, 50, 75, 100, 150, 200\text{ cm}$), the startup/stopping errors isolate into the regression intercept, leaving the slope clean:
   $$\text{ticks} = m \cdot \text{distance} + c \implies \text{TICKS\_PER\_CM} = m$$
 * **Apparatus**: Minimum 2 meters of authentic competition mat with high-precision tape measure.
@@ -90,10 +91,10 @@ flowchart LR
 </p>
 
 * **Objective**: Find the exact digital servo command that drives the vehicle in a mathematically straight line.
-* **Current Value**: **`69.0 deg`** (for JX PS-1171MG linkage).
+* **Current Values**: **`71.0°`** in `OpenRound.cpp` (current car); **`69.0°`** in `ObstacleRound.cpp` / `hardware_config.h`, which the header notes was found on the earlier MG996R build and must be re-measured for the JX PS-1171MG.
 * **Procedure**:
   1. Sweep servo commands in $0.5^\circ$ increments around nominal center.
-  2. Drive $3\text{ meters}$ at each angle, recording accumulated heading drift via the BNO085 gyro.
+  2. Drive $3\text{ meters}$ at each angle, recording accumulated heading drift via the BNO085.
   3. Plot drift vs. commanded angle; identify the minimum of the V-curve where heading drift equals $0.00^\circ/\text{m}$.
 
 ---
@@ -105,9 +106,10 @@ flowchart LR
 </p>
 
 * **Objective**: Distinguish between authentic black wall returns and spurious floor returns using photon count rate.
-* **Current Values**: **`SIGNAL_MIN_MCPS = 4.0`**, **`TOF_MAX_VALID_MM = 1300`**.
-* **Principle**: On matte black walls, reflected infrared returns are weak ($< 3.0\text{ MCPS}$). Spurious reflections off the bright white vinyl mat produce high photon rates ($> 5.0\text{ MCPS}$).
-* **Procedure**: Measure signal return rate across distances from $200\text{ mm}$ to $1200\text{ mm}$ against black walls, versus open white mat. Set the discard ceiling in the clear gap between distributions.
+* **Current Values**: **`SIGNAL_MIN_MCPS = 4.0`**, **`TOF_MAX_VALID_MM = 1300`** (obstacle program, VL53L1X). The open program's VL53L0X path uses `TOF_MAX_VALID_MM = 1200` and no signal filter.
+* **Principle (from the step-5 sketch)**: matte black walls return weak signal; the white mat returns strong signal. Measure both and set the threshold in the gap.
+* **Procedure**: Log signal rate for open floor (no wall in range) and for a black wall at 200–1200 mm; plot both populations and place the threshold in the gap.
+* ⚠️ **Known inconsistency**: the sketch describes a *ceiling* (discard strong returns), but `ObstacleRound.cpp` implements a *floor* (`signal >= SIGNAL_MIN_MCPS` is kept, weak returns are discarded). Decide from the logged data which one is right and fix the other.
 
 ---
 
@@ -118,7 +120,7 @@ flowchart LR
 </p>
 
 * **Objective**: Tune the proportional eased cornering controller.
-* **Current Values**: `TURN_KP = 2.5`, `TURN_KV = 3.5`, `TURN_STOP_DEG = 0.3°`, `TURN_MIN_PWM = 100`, `TURN_MAX_PWM = 130`.
+* **Current Values** (both programs): `TURN_KP = 2.5`, `TURN_KV = 3.5`, `TURN_MIN_STEER = 8°`, `TURN_MAX_STEER = 55°`, `TURN_STOP_DEG = 0.3°`, `TURN_MIN_PWM = 100`, `TURN_MAX_PWM = 130`.
 * **Control Law**:
   $$\text{error} = \theta_{\text{target}} - \theta_{\text{current}}$$
   $$\text{steer} = \text{clamp}(K_{p,\text{turn}} \cdot |\text{error}|,\; \text{TURN\_MIN\_STEER},\; \text{TURN\_MAX\_STEER})$$
@@ -139,7 +141,7 @@ flowchart LR
   1. Increment $K_p$ on a $4\text{-meter}$ straight until the vehicle visibly oscillates (snaking period $\approx 0.5\text{ s}$).
   2. Reduce $K_p$ to $60\%$ of the oscillation onset gain.
   3. $K_i$ is kept at 0 (eliminates integral windup and prevents masking mechanical steering misalignment).
-  4. $K_d$ is kept at 0 (gyro yaw rate is pre-filtered by hardware fusion).
+  4. $K_d$ is kept at 0 (it would act on the filtered yaw rate; the P term alone was sufficient).
 
 ---
 
@@ -151,10 +153,16 @@ flowchart LR
 
 * **Objective**: Classify track lines into ORANGE, BLUE, or WHITE MAT independent of battery voltage or ambient light.
 * **Current Calibration**:
-  * **BLUE LINE**: $\%B > 36\% \quad \text{AND} \quad \%R < 24\%$
-  * **ORANGE LINE**: $\%R > 35\% \quad \text{AND} \quad \%B < 27\%$
-  * **WHITE MAT**: Sitting centrally between thresholds $\to$ Returns `COLOR_NONE`.
-* **Why Use Channel Percentages**: Raw ADC counts shift as the LED power drops with battery discharge or when shadows pass over the robot. Normalized ratios ($\%R = R / (R+G+B)$) remain completely invariant under varying light intensities.
+
+  | Class | `OpenRound.cpp` (Sept 2026, measured on the mat) | `ObstacleRound.cpp` (earlier) |
+  |:---|:---|:---|
+  | ORANGE | $\%R > 52$ AND $\%B < 18$ | $\%R > 35$ AND $\%B < 27$ |
+  | BLUE | $\%B > 23$ AND $\%R < 40$ | $\%B > 36$ AND $\%R < 24$ |
+  | WHITE / none | neither rule matches, or $R+G+B < 100$ | neither rule matches |
+
+  Measured on the current car: white $\%R$ 47 / $\%B$ 19, orange 69 / 11, blue 36 / 27.
+* **Bench tool**: the thresholds above were captured with the colour-capture version of `src/tools/bench/tof_test.ino` (commit `a6f685e`, guide in [`tof_color_sensor_routine.txt`](../src/tools/bench/tof_color_sensor_routine.txt)). That file has since been replaced by a three-ToF test; restore the old version from git history to re-measure.
+* **Why Use Channel Percentages**: Raw counts shift with LED brightness, sensor height and shadows. Normalised ratios ($\%R = R / (R+G+B)$) are largely insensitive to overall intensity.
 * **Debounce Filter**: Line detection must hold for `COLOR_CONFIRM_MS = 6 ms` before triggering corner events.
 
 ---
@@ -167,27 +175,30 @@ Pillar color detection runs independently on the Raspberry Pi 5:
    cd src/pi
    python3 dashboard.py
    ```
-2. Open a browser at `http://<pi-ip>:5000`.
-3. Click on live video samples of red and green pillars under actual arena lighting.
-4. Save configuration: updates are atomically committed to [`src/pi/config.json`](../src/pi/config.json).
+2. Open a browser at `http://<pi-ip>:8080`.
+3. Adjust the HSV sliders against the live view of red and green pillars under actual arena lighting.
+4. Press **Save**: values are written atomically to [`src/pi/config.json`](../src/pi/config.json). Restart `main.py` to pick them up.
+
+(The click-to-sample Lab tool the team also uses is not committed yet — see [`src/pi/README.md`](../src/pi/README.md).)
 
 ---
 
 ## 11. Master Calibration Constants Reference
 
-| Firmware Constant | Calibrated Value | Calibration Step | Hardware / File |
-|:---|:---:|:---:|:---|
-| `TICKS_PER_CM` | **31.933** | Step 2 | Motor Encoder |
-| `SERVO_TRUE_STRAIGHT` | **69.0°** | Step 4 | JX PS-1171MG |
-| `SERVO_MAX_LEFT` / `RIGHT` | **5.0° / 115.0°** | Step 4 | Mechanical Lock Limits |
-| `SERVO_SLEW` | **2.5°/cycle** | Step 3 | Slew Rate Limiter |
-| `SIGNAL_MIN_MCPS` | **4.0** | Step 5 | VL53L1X Firmware Filter |
-| `TOF_MAX_VALID_MM` | **1300 mm** | Step 5 | Wall Distance Ceiling |
-| `TURN_KP` / `TURN_KV` | **2.5 / 3.5** | Step 6 | Eased Turn Law |
-| `TURN_STOP_DEG` | **0.3°** | Step 6 | Gyro Turn Exit Window |
-| `TURN_MIN_PWM` / `MAX_PWM` | **100 / 130** | Step 6 | Motor Cornering Speeds |
-| `HEAD_KP` / `KI` / `KD` | **2.0 / 0.0 / 0.0** | Step 7 | Straight Cruise Heading Hold |
-| `YAW_FILT_ALPHA` | **0.35** | Step 7 | Gyro Low-Pass Filter |
-| Floor BLUE Cutoff | **%B > 36 & %R < 24** | Step 8 | TCS34725 Discriminator |
-| Floor ORANGE Cutoff | **%R > 35 & %B < 27** | Step 8 | TCS34725 Discriminator |
-| `COLOR_CONFIRM_MS` | **6 ms** | Step 8 | Color Edge Debounce |
+| Firmware Constant | `OpenRound.cpp` | `ObstacleRound.cpp` | Calibration Step |
+|:---|:---:|:---:|:---:|
+| `TICKS_PER_CM` | **14.853** | **31.933** | Step 2 |
+| `SERVO_TRUE_STRAIGHT` | **71.0°** | **69.0°** | Step 4 |
+| `SERVO_MAX_LEFT` / `RIGHT` | 1.0° / 150.0° | 5.0° / 115.0° | Step 4 |
+| `SERVO_SLEW` | 2.5°/cycle | 2.5°/cycle | Step 3 |
+| `SIGNAL_MIN_MCPS` | — | 4.0 | Step 5 |
+| `TOF_MAX_VALID_MM` | 1200 mm | 1300 mm | Step 5 |
+| `TURN_KP` / `TURN_KV` | 2.5 / 3.5 | 2.5 / 3.5 | Step 6 |
+| `TURN_STOP_DEG` | 0.3° | 0.3° | Step 6 |
+| `TURN_MIN_PWM` / `MAX_PWM` | 100 / 130 | 100 / 130 | Step 6 |
+| `HEAD_KP` / `KI` / `KD` | 2.0 / 0.0 / 0.0 | 2.0 / 0.0 / 0.0 | Step 7 |
+| `YAW_FILT_ALPHA` | 0.35 | 0.35 | Step 7 |
+| `BASE_SPEED` (PWM) | 70 | 150 | — |
+| Floor ORANGE | %R > 52 & %B < 18 | %R > 35 & %B < 27 | Step 8 |
+| Floor BLUE | %B > 23 & %R < 40 | %B > 36 & %R < 24 | Step 8 |
+| `COLOR_CONFIRM_MS` | 6 ms | 6 ms | Step 8 |
