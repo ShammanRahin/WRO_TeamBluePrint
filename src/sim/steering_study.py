@@ -22,7 +22,7 @@ CARL = 180.0
 BAY_DEPTH, BAY_LEN = 200.0, 1.5*180.0
 LOCK, D_LAT = 40.0, 120.0     # full-lock centre angle (deg); lateral move into bay (mm)
 SIG_TT, SIG_SENS = 0.15, 0.088   # deg: central-pivot backlash; AS5600 quantisation
-OUT = r"F:\claude\WRO_TeamBluePrint\media\steering"
+OUT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "media", "steering"))
 
 # ---------- geometry ----------
 def ackermann_angles(dc):

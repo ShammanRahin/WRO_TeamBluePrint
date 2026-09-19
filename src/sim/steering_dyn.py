@@ -22,7 +22,7 @@ L, T = 120.0, 95.0
 CARL, CARW, M = 180.0, 100.0, 1.5
 G = 9810.0                       # mm/s^2
 LOCK = 40.0
-OUT = r"F:\claude\WRO_TeamBluePrint\media\steering"
+OUT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "media", "steering"))
 
 def ackermann_angles(dc):
     d = math.radians(dc)
