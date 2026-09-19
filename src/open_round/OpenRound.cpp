@@ -15,12 +15,14 @@
 //
 // PER CORNER
 //   1. drive straight on IMU heading
-//   2. colour line arms the gate
-//   3. turn fires only when the gate is armed AND the turn-side distance
-//      reads above SIDE_OPEN_MM (1500) for SIDE_OPEN_FRAMES consecutive
-//      NEW LiDAR frames (the inner wall has given way)
-//   4. eased 90 deg arc, then straight back to DRIVE on the new heading
-//      (no lane correction - the straight is held on IMU alone)
+//   2. FIRST corner only: colour line arms the gate and sets direction.
+//      After the direction is locked the colour sensor plays no part in
+//      triggering turns (except the lidar-dead fallback below).
+//   3. turn fires when the turn-side distance reads above SIDE_OPEN_MM
+//      (1500) for SIDE_OPEN_FRAMES consecutive NEW LiDAR frames
+//      (the inner wall has given way)
+//   4. eased 90 deg arc at full steering lock, then straight back to
+//      DRIVE on the new heading (no lane correction - IMU only)
 //
 // WHY 1500 mm IS SAFE AS A FIXED NUMBER
 // The widest corridor is 1000 mm, so the inside wall can never read
@@ -44,6 +46,8 @@
 //   encoder  TIM5 PA0/PA1, negated so forward counts up
 //   IMU      BNO08x SPI1 ~100 Hz, clockwise = negative yaw
 //   colour   TCS34725 CH4, white pR 47 / orange pR 69 / blue pB 27
+//   servo    500-2500 us, straight 76.5, left stop 20, right stop 140
+//            turning radius at full lock: left 27 cm, right 25 cm
 // ============================================================
 
 enum BlockColor { COLOR_NONE, COLOR_ORANGE, COLOR_BLUE };
@@ -81,9 +85,12 @@ const int BTN_START_PIN = PB15;   // not wired yet - see START_DELAY_MS
 
 // ---- calibration ----
 const float TICKS_PER_CM        = 14.853;
-const float SERVO_TRUE_STRAIGHT = 71.0;
-const float SERVO_MAX_LEFT      = 1.0;    // servo BELOW straight steers LEFT
-const float SERVO_MAX_RIGHT     = 150.0;  // servo ABOVE straight steers RIGHT
+
+const int   SERVO_MIN_PULSE_US  = 500;
+const int   SERVO_MAX_PULSE_US  = 2500;
+const float SERVO_TRUE_STRAIGHT = 76.5;
+const float SERVO_MAX_LEFT      = 20.0;   // left hard stop  (below straight steers LEFT)
+const float SERVO_MAX_RIGHT     = 140.0;  // right hard stop (above straight steers RIGHT)
 const float IMU_YAW_SIGN        = 1.0;    // clockwise reads negative
 
 const int BASE_SPEED     = 70;
@@ -206,8 +213,7 @@ int        cornerCount   = 0;
 float targetHeading = 0.0;
 float laneHeading   = 0.0;
 
-BlockColor lastFirstColor   = COLOR_NONE;
-long       cornerFirstTicks = 0;
+BlockColor lastFirstColor = COLOR_NONE;
 
 // cached IMU, refreshed every loop
 bool          gImuFresh = false;
@@ -255,7 +261,8 @@ float lastServoCmd = SERVO_TRUE_STRAIGHT;
 void setServoAngle(float angleDeg) {
   angleDeg = constrain(angleDeg, SERVO_MAX_LEFT, SERVO_MAX_RIGHT);
   lastServoCmd = angleDeg;
-  steeringServo.writeMicroseconds((int)((angleDeg / 180.0) * 1000.0) + 1000);
+  int pulse = (int)((angleDeg / 180.0) * (SERVO_MAX_PULSE_US - SERVO_MIN_PULSE_US)) + SERVO_MIN_PULSE_US;
+  steeringServo.writeMicroseconds(pulse);
 }
 
 // TIM5 encoder, negated so driving forward counts up
@@ -395,7 +402,7 @@ void initHardware() {
   digitalWrite(LED2_PIN, LOW);
   digitalWrite(LED3_PIN, LOW);
 
-  steeringServo.attach(SERVO_PIN, 1000, 2000);
+  steeringServo.attach(SERVO_PIN, SERVO_MIN_PULSE_US, SERVO_MAX_PULSE_US);
   setServoAngle(SERVO_TRUE_STRAIGHT);
 
   // ---- TIM5 encoder on PA0 / PA1 (AF2) ----
@@ -490,15 +497,19 @@ void updateHeadingPid(float heading) {
 }
 
 // ============================================================
-// EASED TURN LAW - verbatim from the tuned turning90 sketch
+// EASED TURN LAW - tuned turning90 sketch, steer cap = full lock
 // ============================================================
-const float TURN_KP        = 2.5;
-const float TURN_MAX_STEER = 55.0;
-const float TURN_MIN_STEER = 8.0;
-const float TURN_KV        = 3.5;
-const int   TURN_MAX_PWM   = 130;
-const int   TURN_MIN_PWM   = 100;
-const float TURN_STOP_DEG  = 0.3;
+// Steering saturates at each side's hard stop, so the arc runs at full
+// lock (27 cm left / 25 cm right) and only eases off in the last
+// TURN_MAX_STEER_x / TURN_KP degrees of heading error.
+const float TURN_KP              = 2.5;
+const float TURN_MAX_STEER_LEFT  = SERVO_TRUE_STRAIGHT - SERVO_MAX_LEFT;   // 56.5
+const float TURN_MAX_STEER_RIGHT = SERVO_MAX_RIGHT - SERVO_TRUE_STRAIGHT;  // 63.5
+const float TURN_MIN_STEER       = 8.0;
+const float TURN_KV              = 3.5;
+const int   TURN_MAX_PWM         = 130;
+const int   TURN_MIN_PWM         = 100;
+const float TURN_STOP_DEG        = 0.3;
 
 long turnStartTicks = 0;
 long turnCapTicks   = 0;
@@ -508,10 +519,11 @@ bool turnArcStep(float target) {
   if (gImuFresh) {
     float err = wrapDeg(target - gHeading);
     if (fabs(err) < TURN_STOP_DEG) return true;
-    float mag   = fabs(err);
-    float steer = constrain(TURN_KP * mag, TURN_MIN_STEER, TURN_MAX_STEER);
-    int   pwm   = (int)constrain(TURN_KV * mag, (float)TURN_MIN_PWM, (float)TURN_MAX_PWM);
-    float servo = (err > 0) ? (SERVO_TRUE_STRAIGHT - steer) : (SERVO_TRUE_STRAIGHT + steer);
+    float mag      = fabs(err);
+    float maxSteer = (err > 0) ? TURN_MAX_STEER_LEFT : TURN_MAX_STEER_RIGHT;
+    float steer    = constrain(TURN_KP * mag, TURN_MIN_STEER, maxSteer);
+    int   pwm      = (int)constrain(TURN_KV * mag, (float)TURN_MIN_PWM, (float)TURN_MAX_PWM);
+    float servo    = (err > 0) ? (SERVO_TRUE_STRAIGHT - steer) : (SERVO_TRUE_STRAIGHT + steer);
     setServoAngle(servo);
     setMotorSpeed(pwm);
   }
@@ -523,8 +535,7 @@ bool turnArcStep(float target) {
 // ============================================================
 void goState(RobotState s) { currentState = s; entered = false; }
 
-BlockColor dcWantFirst;
-bool       dcFirstTurn;
+BlockColor dcWantColor;
 bool       dcColorArmed;
 long       dcBaseTicks;
 long       dcLockoutTicks;
@@ -631,13 +642,17 @@ void waitStartStep() {
 
 // ============================================================
 // STATE: DRIVE TO CORNER
+//
+// Before the direction is locked (first corner): colour arms the gate
+// and records the direction, then the LiDAR side-open confirms the turn.
+// After the lock: the LiDAR side-open alone triggers the turn. Colour is
+// only watched again if the LiDAR dies (degraded-mode fallback).
 // ============================================================
 void driveStep() {
   if (!entered) {
     entered = true;
-    dcWantFirst  = lockedColor;
-    dcFirstTurn  = (lockedColor == COLOR_NONE);
-    dcColorArmed = false;
+    dcWantColor   = lockedColor;
+    dcColorArmed  = false;
     sideOpenCount = 0;
     resetColorDetector();
     resetHeadingPid();
@@ -651,7 +666,7 @@ void driveStep() {
 
   long straightTicks = absEnc(readEncoder() - dcBaseTicks);
   if (straightTicks >= dcSafetyTicks) {
-    Serial.println(F("# WARN no line within safety distance, retrying"));
+    Serial.println(F("# WARN no turn trigger within safety distance, retrying"));
     entered = false;
     return;
   }
@@ -659,23 +674,24 @@ void driveStep() {
   updateHeadingPid(targetHeading);
 
   // Lockout runs from the turn corner (encoder zeroed at the end of the
-  // arc), so the lines just turned over cannot re-arm the gate.
-  if (!dcColorArmed && absEnc(readEncoder()) <= dcLockoutTicks) return;
+  // arc), so the corner just turned cannot trigger another turn.
+  if (absEnc(readEncoder()) <= dcLockoutTicks) return;
 
-  // ---- 1. arm on the colour line ----
-  if (!dcColorArmed) {
-    BlockColor c = detectColor(dcWantFirst);
+  bool directionLocked = (lockedColor != COLOR_NONE);
+
+  // ---- 1. colour gate: first corner, or lidar-dead fallback ----
+  if (!dcColorArmed && (!directionLocked || lidarDead)) {
+    BlockColor c = detectColor(dcWantColor);
     if (c != COLOR_NONE) {
       dcColorArmed = true;
-      cornerFirstTicks = readEncoder();
-      if (dcFirstTurn) lastFirstColor = c;
+      if (!directionLocked) lastFirstColor = c;
       sideOpenCount = 0;
       resetColorDetector();
       Serial.print(F("# gate ")); Serial.print(c == COLOR_ORANGE ? F("ORANGE") : F("BLUE"));
       Serial.print(F(" side=")); Serial.println(turnSideMm());
     }
-    return;
   }
+  if (!directionLocked && !dcColorArmed) return;   // direction not known yet
 
   // ---- 2. turn confirm: turn side > SIDE_OPEN_MM on consecutive NEW frames ----
   // Counted per frame, not per loop: loop() runs far faster than the Pi
@@ -690,17 +706,19 @@ void driveStep() {
 
   bool sideOpen = (sideOpenCount >= SIDE_OPEN_FRAMES);
 
-  if (sideOpen || lidarDead) {
+  if (sideOpen || (lidarDead && dcColorArmed)) {
     if (sideOpen) { Serial.print(F("# turn: side open ")); Serial.println(sideNow); }
     else          Serial.println(F("# turn: colour only (lidar dead)"));
 
-    if (lockedColor == COLOR_NONE) {
+    if (!directionLocked) {
       lockedColor   = lastFirstColor;
       clockwiseMode = (lockedColor == COLOR_ORANGE);
       Serial.println(clockwiseMode ? F("# LOCKED CW (orange)") : F("# LOCKED CCW (blue)"));
     }
 
-    float segCm = absEnc(cornerFirstTicks) / TICKS_PER_CM;
+    // Segments are measured to the turn trigger point (same reference
+    // for A and L, so final = L - A still lands on the start position).
+    float segCm = absEnc(readEncoder()) / TICKS_PER_CM;
     if (cornerCount == 0) {
       firstSegmentCm = segCm;
       Serial.print(F("# A=")); Serial.println(firstSegmentCm);
