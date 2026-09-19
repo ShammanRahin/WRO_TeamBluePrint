@@ -37,6 +37,13 @@
 // alone. That is the same path the old firmware used when the ToF
 // failed to init, so it is known-good rather than new code.
 //
+// STARTUP GATE
+// loop() does nothing but poll Serial until the first well-formed frame
+// arrives from the Pi (see fsmStarted / lidarFrames below). WAIT_START's
+// countdown - and therefore every state after it - cannot begin before
+// that, so the car never starts moving while the Pi's LiDAR script is
+// still coming up or hasn't been launched yet.
+//
 // BENCH-VERIFIED
 //   motor    PA2 forward, PA3 reverse
 //   encoder  TIM5 PA0/PA1, negated so forward counts up
@@ -67,7 +74,7 @@ const int IMU_CS_PIN  = PA4;
 const int IMU_INT_PIN = PB0;
 const int IMU_RST_PIN = PB1;
 
-const int LED1_PIN = PB12;        // solid = running, blinking = lidar stale
+const int LED1_PIN = PB12;        // solid = running; slow blink (500 ms) = waiting for first Pi frame; fast blink (100 ms) = lidar stale mid-run
 const int LED2_PIN = PB13;        // lit while ORANGE is under the sensor
 const int LED3_PIN = PB14;        // lit while BLUE is under the sensor
 const int BTN_START_PIN = PB15;   // not wired yet - see START_DELAY_MS
@@ -202,6 +209,12 @@ const float REALIGN_SAFETY_CM = 80.0;
 // ============================================================
 // FSM DATA
 // ============================================================
+// The FSM (and its WAIT_START countdown) is held off entirely until the
+// Pi has sent at least one well-formed frame - see the gate at the top
+// of loop(). Everything below still initialises to its normal idle
+// values; it just doesn't get ticked until fsmStarted flips true.
+bool fsmStarted = false;
+
 RobotState    currentState = STATE_WAIT_START;
 bool          entered = false;
 unsigned long phaseT0 = 0;
@@ -908,6 +921,21 @@ void setup() {
 
 void loop() {
   serviceSensors();
+
+  // ---- startup gate ----
+  // Nothing below this runs until the Pi has sent at least one
+  // well-formed frame (lidarFrames > 0). Before that, we just keep
+  // draining Serial and slow-blink LED1 to show we're waiting on the
+  // Pi. This stops WAIT_START's countdown - and every state after it -
+  // from starting while the Pi's LiDAR script isn't up yet.
+  if (!fsmStarted) {
+    if (lidarFrames == 0) {
+      digitalWrite(LED1_PIN, ((millis() / 500) & 1) ? HIGH : LOW);
+      return;
+    }
+    fsmStarted = true;
+    Serial.println(F("# first LiDAR frame received - FSM starting"));
+  }
 
   // Release the colour mute once we are forward of where the reverse began.
   if (colorMuted && currentState != STATE_RECOVER && readEncoder() >= colorMuteFrom) {
