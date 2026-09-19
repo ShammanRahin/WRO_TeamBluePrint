@@ -13,6 +13,7 @@ Files used to produce the physical parts — 3D-printed and machined/cut pieces 
 | [`Middle Plate.stl`](Middle%20Plate.stl) | Mid-Deck Chassis Plate | STL (Binary) | ~1.22 MB | 3D print-ready middle tier electronics deck |
 | [`LiDAR mount.stl`](LiDAR%20mount.stl) | Slamtec RPLIDAR C1 Mount | STL (Binary) | ~1.48 MB | 3D print-ready mast mount for 360° LiDAR scanner |
 | [`Back TOF.stl`](Back%20TOF.stl) | Rear ToF Sensor Mount | STL (Binary) | ~722 KB | 3D print-ready collimated rear ToF sensor bracket |
+| [`Tail .stl`](Tail%20.stl) | Rear Wing / Spoiler | STL (Binary) | ~3.03 MB | 3D print-ready rear wing structure ("TEAM BLUEPRINT") |
 | [`Left Stearing Hand.stl`](Left%20Stearing%20Hand.stl) | Steering Knuckle (Left Hand) | STL (Binary) | ~3.96 MB | 3D print-ready Ackermann steering knuckle (left) |
 | [`Right Stearing Hand.stl`](Right%20Stearing%20Hand.stl) | Steering Knuckle (Right Hand) | STL (Binary) | ~4.03 MB | 3D print-ready Ackermann steering knuckle (right) |
 | [`LEGO Gear BOX.stl`](LEGO%20Gear%20BOX.stl) | Drive Gearbox Housing | STL (Binary) | ~2.54 MB | 3D print-ready gearbox enclosure for 5:1 reduction drive |
@@ -38,7 +39,8 @@ Files used to produce the physical parts — 3D-printed and machined/cut pieces 
 | Part | Process | Notes |
 |---|---|---|
 | Front Bumper | Print (PLA/PETG) | Full STEP assembly model + STLs included |
-| Chassis Plates | Print (PLA/PETG) | Base Plate + Middle Plate included |
+| Main Chassis & Mid-Deck | Print (PLA/PETG) | Base Plate + Middle Plate included |
+| Rear Wing / Spoiler | Print (PLA/PETG) | "TEAM BLUEPRINT" spoiler structure (`Tail .stl`) |
 | Sensor & LiDAR Mounts | Print (PETG/PLA+) | LiDAR mount + Back ToF bracket included |
 | Steering Knuckles (Ackermann) | Print (PETG/PLA+) | Left & Right knuckle STLs included; 107° / 73° arms, ±35° travel |
 | Drive Powertrain | Print (PLA/PETG) | 5:1 spur gear enclosure + Motor Mounts + Shaft included |
