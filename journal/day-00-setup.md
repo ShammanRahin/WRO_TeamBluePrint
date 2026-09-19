@@ -6,7 +6,7 @@ Initialised the WRO Future Engineers 2026 project structure in the local clone o
 
 - Verified toolchain: git 2.47.1, PowerShell, Desktop Commander all working.
 - Found no existing local clone (only an unzipped template + a loose CAD folder).
-  Cloned the repo fresh to `F:\claude\WRO_TeamBluePrint`.
+  Cloned the repo fresh to the local workspace.
 - Kept the WRO-standard template dirs (`t-photos, v-photos, video, schemes, src,
   models, other`) that judges expect.
 - Added custom working dirs alongside them: `journal/`, `3D-models/`,

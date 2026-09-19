@@ -9,7 +9,7 @@ analytic model. Dynamic park/tip already validated separately in pymunk.
 Units: mm, g, deg.
 """
 import numpy as np, itertools, math, os
-OUT = r"F:\claude\WRO_TeamBluePrint\media\steering"
+OUT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "media", "steering"))
 
 # ---- fixed component masses (g) and vertical placement rule z(design) ----
 # z = height of the part's CG above ground (mm). Heavy parts low = low CG.

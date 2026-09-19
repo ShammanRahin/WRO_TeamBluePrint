@@ -3,7 +3,7 @@ WRO FE 2026 - solid rear axle vs open differential: quantify scrub + odometry.
 Key geometric facts derived and checked numerically.
 """
 import numpy as np, math, os
-OUT = r"F:\claude\WRO_TeamBluePrint\media\steering"
+OUT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "media", "steering"))
 
 track = 120.0        # mm
 wheel_dia = 40.0     # mm
