@@ -175,7 +175,12 @@ uint8_t xor8(const uint8_t *p, uint8_t n) {
 // ============================================================
 // CACHED SENSORS
 // ============================================================
-enum BlockColor { COLOR_NONE, COLOR_ORANGE, COLOR_BLUE };
+// The values go on the wire as a byte, and the Arduino IDE's prototype
+// generator inserts its auto-prototypes ABOVE this line when the file is
+// built as a .ino - so a function returning `BlockColor` would be declared
+// before the type exists. Plain uint8_t constants dodge that entirely and
+// match what TELEM carries anyway.
+enum BlockColor : uint8_t { COLOR_NONE = 0, COLOR_ORANGE = 1, COLOR_BLUE = 2 };
 
 bool          gImuFresh = false;
 float         gHeading  = 0.0;
@@ -183,7 +188,7 @@ float         gYawRate  = 0.0;
 float         gPrevH    = 0.0;
 unsigned long gPrevHT   = 0;
 bool          gImuSeen  = false;
-BlockColor    gRawColor = COLOR_NONE;
+uint8_t       gRawColor = COLOR_NONE;
 
 float wrapDeg(float a) {
   while (a > 180.0)  a -= 360.0;
@@ -292,7 +297,7 @@ void readColor(uint16_t &r, uint16_t &g, uint16_t &b, uint16_t &c) {
 
 // The classification stays here because it is a sensor reading. The DEBOUNCE
 // and the "is this the corner gate" decision are the Pi's now.
-BlockColor classifyColor() {
+uint8_t classifyColor() {
   uint16_t r, g, b, c;
   readColor(r, g, b, c);
   float total = (float)r + (float)g + (float)b;
@@ -508,7 +513,7 @@ void sendTelem() {
   int16_t  yaw     = (int16_t)lroundf(clampf(gYawRate * 10.0f, -32768, 32767));
   int32_t  odo     = (int32_t)readEncoder();
   int16_t  servo   = (int16_t)lroundf(clampf(lastServoCmd * 10.0f, -32768, 32767));
-  uint8_t  floorC  = (uint8_t)gRawColor;
+  uint8_t  floorC  = gRawColor;
   uint8_t  tries   = (uint8_t)recoverTries;
 
   uint8_t buf[TELEM_LEN];
