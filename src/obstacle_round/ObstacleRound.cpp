@@ -2,189 +2,388 @@
 #include <Servo.h>
 #include <SPI.h>
 #include <Wire.h>
-#include <stdlib.h>
-#include <string.h>
 #include <SparkFun_BNO08x_Arduino_Library.h>
 #include <Adafruit_TCS34725.h>
-#include <VL53L1X.h>
+
+#ifndef DEG_TO_RAD
+#define DEG_TO_RAD 0.017453292519943295
+#endif
+
 // ============================================================
-// OBSTACLE ROUND  -  clean build on the open-round navigation core.
+// OBSTACLE ROUND - NON-BLOCKING FIRMWARE
 //
-//   NAV  : same non-blocking FSM as the open round. The FLOOR colour
-//          sensor gates corner turns (orange/blue lines); turns fire
-//          when the front wall is close OR the inner side wall gives way.
+// Built from OpenRound.cpp (same FSM, pins, calibration, turn trigger,
+// recovery, final straight) with the old obstacle-round logic
+// (main.ino + tracker.py) folded into the driving:
 //
-//   PILLARS (camera, over Serial from the Pi):
-//          "V,<colour>,<dx>,<area>"  colour = R | G | N
-//          OFFSET-BASED avoidance: the pillar's own position (dx) sets
-//          how far we move; the pass-side ToF is only a SAFETY FLOOR,
-//          never the target (that was the wall-following flaw). We swerve
-//          to the computed offset, hold heading until the colour leaves
-//          the frame, then come back the SAME remembered displacement.
-//              GREEN -> pass on the LEFT   (steer left, watch LEFT  ToF)
-//              RED   -> pass on the RIGHT  (steer right, watch RIGHT ToF)
+//   old main.ino                      this file
+//   ---------------------------------------------------------------
+//   wall PD on ToF (right - left)  -> wall-centre PD on LiDAR R - L,
+//                                     output is a heading offset that the
+//                                     IMU heading PID tracks
+//   vision PD, red -100 / green    -> same gains, same targets, same
+//     +100 px, area blend 1000-1800   area blend
+//   servo = 97 - blended (67..127) -> servo = 76.5 + blended (20..140)
+//                                     sign flipped: on this linkage a
+//                                     LOWER servo angle steers LEFT
+//   sonar <50 cm hard steer        -> dropped
+//   sonar <30 cm reverse (blocking)-> non-blocking RECOVER at 200 mm,
+//                                     suppressed while the camera sees a
+//                                     pillar (the pillar PD owns that)
+//   magenta                        -> ignored (Pi never sends it)
 //
-//   FRONT FAILSAFE: while avoiding, if the front ToF < 200 mm we are
-//          about to clip something -> reverse on the last steering angle,
-//          temporarily increase the swerve angle, then push forward again.
-//          After the pillar is cleared the swerve angle returns to base.
+// SERIAL FRAME (Pi -> STM32), one line per send, ~50 Hz:
+//     left,front,right,rev,color,err,area,vseq,coneL,coneR,wallAng,pX,pY,uX,uY\n
+//   left/front/right  mm, 65535 = no return (single beams, used for the
+//                     corner trigger and the front panic)
+//   rev               lidar revolution counter - cone values only change
+//                     once per rev, so the wall PD and levelling run per rev
+//   coneL / coneR     PERPENDICULAR distance to the left / right wall, from a
+//                     line fitted to every LiDAR point in a 45 deg cone
+//                     centred on 90 / 270 deg (pillars rejected as outliers).
+//                     65535 = no wall fitted on that side
+//   wallAng           car yaw relative to the walls, deci-degrees,
+//                     + = car pointing LEFT of the wall direction.
+//                     32767 = no valid fit
+//   pX / pY           chosen pillar's position in mm from the LiDAR,
+//                     x forward, y left (camera bearing + LiDAR range).
+//                     32767 = no pillar / not located
+//   uX / uY           nearest LiDAR object inside the corridor that is not
+//                     the camera's pillar - colour unknown. 32767 = none
+//   color             1 = red, 0 = green, 2 = none
+//   err               pillar centre x - 320 (640 px frame), + = right
+//   area              blob area in 320x240 detection pixels
+//   vseq              camera frame counter - the vision PD only updates
+//                     when this changes, so a camera frame resent in
+//                     several serial lines can't spike the D term
+// A 4-field open-round line (left,front,right,rev) still parses; vision
+// then reads as "none".
 //
-//   No parking. 3 laps = 12 corners.
+// COMMANDS (Pi -> STM32), sent by the Start / Stop buttons on the Pi page:
+//     S\n   START - only accepted while armed in WAIT_START (or FINISHED,
+//            which re-arms and starts a fresh run) and the LiDAR is live
+//     X\n   STOP  - motor off, steering centred, straight to FINISHED
+//
+// START SEQUENCE (no physical button)
+//   power on -> wait for the first Pi frame (LED1 slow blink)
+//            -> armed in WAIT_START (LED1 medium blink)
+//            -> START from the page -> run
+//
+// PER CORNER
+//   1. drive on IMU heading + cone wall centring + pillar PD; the lane
+//      heading is levelled slowly to the fitted wall direction so IMU
+//      drift can't build up over 3 laps
+//   2. FIRST corner only: floor colour line arms the gate and sets
+//      direction (orange = CW, blue = CCW)
+//   3. turn fires when the turn-side distance reads above SIDE_OPEN_MM
+//      for SIDE_OPEN_FRAMES consecutive NEW frames
+//   4. 90 deg arc at TURN_LOCK_FRACTION of full lock (wider than the open
+//      round), vision OFF during the arc, back to DRIVE right after
+//      (vision ON again immediately, including the post-corner lockout)
+//
+// BENCH-VERIFIED (inherited from OpenRound.cpp)
+//   motor    PA2 forward, PA3 reverse
+//   encoder  TIM5 PA0/PA1, negated so forward counts up
+//   IMU      BNO08x SPI1 ~100 Hz, clockwise = negative yaw
+//   colour   TCS34725 CH4, white pR 47 / orange pR 69 / blue pB 27
+//   servo    500-2500 us, straight 76.5, left stop 20, right stop 140
+//            turning radius at full lock: left 27 cm, right 25 cm
 // ============================================================
-#define TCA_ADDR 0x70
-#define PiSerial Serial          // Pi link IS USART1 on this board
+
 enum BlockColor { COLOR_NONE, COLOR_ORANGE, COLOR_BLUE };
+
 enum RobotState {
-  STATE_INIT,
   STATE_WAIT_START,
   STATE_DRIVE_TO_CORNER,
   STATE_TURNING,
-  STATE_LANE_CORRECT,
-  STATE_AVOID,
   STATE_FINAL_STRAIGHT,
+  STATE_RECOVER,
   STATE_FINISHED
 };
+
 // ============================================================
 // HARDWARE PINS & OBJECTS
 // ============================================================
-const int RPWM_PIN   = PB9;
-const int LPWM_PIN   = PB8;
-const int DRV_EN_PIN = PB1;
-const int SERVO_PIN  = PA8;
-const int START_BTN_PIN = PA5;        // active-low: PA5 <-> GND, press = LOW
-const int IMU_CS_PIN  = PB0;
-const int IMU_INT_PIN = PB13;
-const int IMU_RST_PIN = PB14;
-const float TICKS_PER_CM        = 31.933;
-const float SERVO_TRUE_STRAIGHT = 69.0;
-const float SERVO_MAX_LEFT      = 5.0;
-const float SERVO_MAX_RIGHT     = 115.0;
-const int   BASE_SPEED          = 150;
-SPIClass SPI_IMU(PB5, PB4, PB3);
+const int MOT_RPWM_PIN = PA2;     // forward  (TIM2_CH3; TIM5 is the encoder)
+const int MOT_LPWM_PIN = PA3;     // reverse  (TIM2_CH4)
+const int SERVO_PIN    = PA8;
+
+const int IMU_CS_PIN  = PA4;
+const int IMU_INT_PIN = PB0;
+const int IMU_RST_PIN = PB1;
+
+const int LED1_PIN = PB12;        // slow blink (500 ms) = waiting for Pi; medium blink (250 ms) = armed, waiting for START; solid = running; fast blink = lidar stale
+const int LED2_PIN = PB13;        // lit while ORANGE is under the sensor
+const int LED3_PIN = PB14;        // lit while BLUE is under the sensor
+
+#define I2C_SCL     PB6
+#define I2C_SDA     PB7
+#define TCA_RST_PIN PB8
+#define TCA_ADDR    0x70
+#define TCS_CH      4             // TCS34725
+
+// ---- calibration ----
+const float TICKS_PER_CM        = 14.853;
+
+const int   SERVO_MIN_PULSE_US  = 500;
+const int   SERVO_MAX_PULSE_US  = 2500;
+const float SERVO_TRUE_STRAIGHT = 76.5;
+const float SERVO_MAX_LEFT      = 20.0;   // left hard stop  (below straight steers LEFT)
+const float SERVO_MAX_RIGHT     = 140.0;  // right hard stop (above straight steers RIGHT)
+const float IMU_YAW_SIGN        = 1.0;    // clockwise reads negative
+
+// Obstacle round: one constant PWM for driving, turning and reversing.
+const int DRIVE_PWM = 60;
+
+
+SPIClass SPI_IMU(PA7, PA6, PA5);  // MOSI, MISO, SCLK
 Servo steeringServo;
 BNO08x myIMU;
 Adafruit_TCS34725 tcs = Adafruit_TCS34725(TCS34725_INTEGRATIONTIME_2_4MS, TCS34725_GAIN_16X);
-bool    tcsConnected     = false;
-uint8_t tcsChannel       = 0;
-float   initialYawOffset = 0.0;
-// ToF (VL53L1X) on the mux:  CH1 = LEFT, CH3 = RIGHT, CH4 = FRONT
-const uint8_t CH_LEFT  = 1;
-const uint8_t CH_RIGHT = 3;
-const uint8_t CH_FRONT = 4;
-VL53L1X  tofL, tofR, tofF;
-bool     tofLok = false, tofRok = false, tofFok = false;
-uint16_t tofLeft = 9999, tofRight = 9999, tofFront = 9999;
-bool     tofLeftValid = false, tofRightValid = false, tofFrontValid = false;
-const uint16_t TOF_MAX_VALID_MM = 1300;
-const float    SIGNAL_MIN_MCPS  = 4.0;
-const uint16_t FRONT_TURN_MM    = 700;
-const unsigned long SIDE_INVALID_MS = 40;   // watched-side invalid this long = wall gave way
+
+bool  tcsOk = false;
+float initialYawOffset = 0.0;
+
+// ============================================================
+// PI LINK   "left,front,right,rev,color,err,area,vseq\n"
+// ============================================================
+const unsigned long LIDAR_STALE_MS      = 200;
+const unsigned long LIDAR_DEAD_MS       = 1000;
+const uint16_t      LIDAR_MAX_VALID_MM  = 3500;   // mat diagonal
+const uint16_t      LIDAR_FAR           = 9999;   // internal "nothing there"
+
+// A beam with no return must read FAR, never near.
+uint16_t lidarSanitize(long v) {
+  if (v <= 0 || v > (long)LIDAR_MAX_VALID_MM) return LIDAR_FAR;
+  return (uint16_t)v;
+}
+
+uint16_t      lidarL = LIDAR_FAR, lidarF = LIDAR_FAR, lidarR = LIDAR_FAR;
+unsigned long lidarLastMs = 0;
+bool          lidarStale  = true;
+bool          lidarDead   = true;
+uint32_t      lidarFrames = 0;
+bool          lidarNewFrame = false;   // true only on the loop a frame was parsed
+
+// vision fields, from the same line
+const int VIS_RED   = 1;
+const int VIS_GREEN = 0;
+const int VIS_NONE  = 2;
+int      visColor = VIS_NONE;
+int      visErr   = 0;
+long     visArea  = 0;
+uint32_t visSeq   = 0;
+
+// 45 deg cone wall fits, from the same line
+const long  CONE_NONE     = 65535;
+const long  ANG_NONE      = 32767;
+uint16_t coneL = LIDAR_FAR, coneR = LIDAR_FAR;   // perpendicular mm, FAR = no fit
+bool     wallAngValid = false;
+float    wallAngDeg   = 0.0;                     // + = car pointing left of the walls
+uint32_t lidarRev     = 0;
+bool     lidarNewRev  = false;                   // true only on the loop rev changed
+
+// pillar position in the car frame (Pi: camera bearing + LiDAR range)
+const long PXY_NONE = 32767;
+bool  pillarXYValid = false;
+float pillarX = 0.0, pillarY = 0.0;              // mm from the LiDAR, x fwd, y left
+// nearest LiDAR object in the corridor whose colour is not known yet
+bool  unknownXYValid = false;
+float unknownX = 0.0, unknownY = 0.0;
+
+char    lidarBuf[128];               // 13-field frame is ~90 chars
+uint8_t lidarLen = 0;
+
+bool startRequested = false;
+bool stopRequested  = false;
+
+void parseLine() {
+  // one-letter commands from the Pi page
+  if (lidarBuf[0] == 'S' && lidarBuf[1] == '\0') { startRequested = true; return; }
+  if (lidarBuf[0] == 'X' && lidarBuf[1] == '\0') { stopRequested  = true; return; }
+
+  long f[15];
+  uint8_t n = 0;
+  char *p = lidarBuf;
+  while (n < 15) {
+    char *end;
+    long v = strtol(p, &end, 10);
+    if (end == p) break;             // no digits - malformed
+    f[n++] = v;
+    if (*end != ',') break;
+    p = end + 1;
+  }
+  if (n < 3) return;                 // not even a lidar frame - drop
+
+  lidarL = lidarSanitize(f[0]);
+  lidarF = lidarSanitize(f[1]);
+  lidarR = lidarSanitize(f[2]);
+
+  if (n >= 8) {
+    visColor = (f[4] == VIS_RED || f[4] == VIS_GREEN) ? (int)f[4] : VIS_NONE;
+    visErr   = (int)f[5];
+    visArea  = f[6];
+    visSeq   = (uint32_t)f[7];
+  } else {
+    visColor = VIS_NONE;             // open-round feed: no camera
+  }
+
+  if (n >= 4 && (uint32_t)f[3] != lidarRev) { lidarRev = (uint32_t)f[3]; lidarNewRev = true; }
+
+  if (n >= 11) {
+    coneL = (f[8] == CONE_NONE) ? LIDAR_FAR : lidarSanitize(f[8]);
+    coneR = (f[9] == CONE_NONE) ? LIDAR_FAR : lidarSanitize(f[9]);
+    wallAngValid = (f[10] != ANG_NONE);
+    wallAngDeg   = wallAngValid ? f[10] / 10.0f : 0.0f;
+  } else {                           // older feed: fall back to the 90/270 beams
+    coneL = lidarL; coneR = lidarR; wallAngValid = false;
+  }
+
+  if (n >= 13 && f[11] != PXY_NONE && f[12] != PXY_NONE) {
+    pillarXYValid = true; pillarX = (float)f[11]; pillarY = (float)f[12];
+  } else {
+    pillarXYValid = false;
+  }
+  if (n >= 15 && f[13] != PXY_NONE && f[14] != PXY_NONE) {
+    unknownXYValid = true; unknownX = (float)f[13]; unknownY = (float)f[14];
+  } else {
+    unknownXYValid = false;
+  }
+
+  lidarLastMs   = millis();
+  lidarStale    = false;
+  lidarDead     = false;
+  lidarFrames++;
+  lidarNewFrame = true;
+}
+
+void serviceLidar() {
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (lidarLen > 0) {
+        lidarBuf[lidarLen] = '\0';
+        parseLine();
+        lidarLen = 0;
+      }
+    } else if (lidarLen < sizeof(lidarBuf) - 1) {
+      lidarBuf[lidarLen++] = c;
+    } else {
+      lidarLen = 0;                 // overflow - drop and resync on newline
+    }
+  }
+  unsigned long age = millis() - lidarLastMs;
+  if (age > LIDAR_STALE_MS) lidarStale = true;
+  if (age > LIDAR_DEAD_MS)  lidarDead  = true;
+}
+
+// ---- turn trigger tuning ----
+const uint16_t SIDE_OPEN_MM     = 1500;  // turn side above this = inner wall gone
+const uint8_t  SIDE_OPEN_FRAMES = 3;     // consecutive NEW frames before believing it
+const float    TURN_TRIGGER_MAX_YAW = 25.0;  // only while the car is this close to the lane
+                                             //   direction: mid-swerve (up to 75 deg) the "side"
+                                             //   beam isn't sideways and fakes an open corner (sim)
+
+uint8_t sideOpenCount = 0;
+
+// ---- wall recovery ----
+const uint16_t WALL_PANIC_MM     = 200;
+const uint16_t WALL_CLEAR_MM     = 350;
+const int      RECOVER_PWM       = DRIVE_PWM;
+const float    RECOVER_MAX_CM    = 30.0;
+const int      RECOVER_MAX_TRIES = 3;
+
 // ============================================================
 // RUN CONSTANTS
 // ============================================================
-const int   TARGET_CORNERS    = 12;
-const int   FINAL_STRAIGHT_CM = 100;
-const float SEARCH_SAFETY_CM  = 400.0;
+const int   TARGET_CORNERS      = 12;
+const int   FINAL_STRAIGHT_CM   = 100;
+const float SEARCH_SAFETY_CM    = 400.0;
+const float POST_CORNER_LOCKOUT_CM = 50.0;
+
 float firstSegmentCm      = 0.0;
 float fullStartStraightCm = 0.0;
 bool  haveFullStraight    = false;
 float finalDistanceCm     = FINAL_STRAIGHT_CM;
+
 // ============================================================
-// LANE CORRECTION TUNING
+// FSM DATA
 // ============================================================
-const float GAP_THRESHOLD_CM       = 20.0;
-const float GAP_DEADBAND_CM        =  2.0;
-const float K_LAT_DEG_PER_CM       =  4;
-const float MAX_LAT_OFFSET_DEG     = 30.0;
-const float CORRECTION_DISTANCE_CM = 25.0;
-const float POST_CORNER_LOCKOUT_CM = 50;
-const int   CORRECTION_SIGN        =   1;
-const int   CORRECTION_PWM         =   70;
-const float REALIGN_SAFETY_CM      = 80.0;
-// ============================================================
-// PILLAR AVOIDANCE TUNING  (offset-based)
-// ============================================================
-const int32_t  AVOID_MIN_AREA_R     = 1600;   // RED   pillar this big -> engage
-const int32_t  AVOID_MIN_AREA_G     = 1600;   // GREEN pillar this big -> engage
-const float    AVOID_STEER_DEG      = 22.0;   // base swerve angle off straight
-const int      AVOID_PWM            = 120;    // speed during the maneuver
-const int      DX_SPAN              = 160;    // half frame width in px (dx range)
-const uint16_t AVOID_SIDE_NEAR_MM   = 150;    // target from pass wall when pillar CENTRED
-const uint16_t AVOID_SIDE_FAR_MM    = 300;    // target when pillar already off to the side
-const uint16_t SIDE_SAFE_MM         = 100;    // hard floor: never closer than this to a wall
-const uint16_t AVOID_OUT_CAP_CM     = 45;     // fallback swerve cap if wall not seen
-const unsigned long AVOID_RELEASE_MS = 150;   // colour must be gone this long to release
-// --- front failsafe (near-miss recovery) ---
-const uint16_t FRONT_STOP_MM        = 200;    // front closer than this = about to hit
-const float    AVOID_STEER_BOOST    = 8.0;    // extra swerve added each near-miss
-const float    AVOID_STEER_MAX      = 44.0;   // cap on the boosted swerve
-const uint16_t AVOID_BACKUP_CM      = 15;     // reverse distance during recovery
-const int      AVOID_BACK_PWM       = 110;    // reverse speed
-const float    RECOVER_MIN_FWD_CM   = 5.0;    // must move forward this far between backups
-// ============================================================
-// VISION (from the Pi over Serial, full-duplex)
-// ============================================================
-struct Vision { char colour; int dx; long area; unsigned long stamp; };
-Vision  vis = {'N', 0, 0, 0};
-char    visBuf[48];
-uint8_t visLen = 0;
-void parseVisionLine(char *s) {          // strict  "V,c,dx,area"
-  if (s[0] != 'V' || s[1] != ',') return;
-  char c = s[2];
-  if (c != 'R' && c != 'G' && c != 'N') return;
-  char *p1 = strchr(s + 3, ',');  if (!p1) return;   // after colour
-  char *p2 = strchr(p1 + 1, ','); if (!p2) return;   // after dx
-  vis.colour = c;
-  vis.dx     = atoi(p1 + 1);
-  vis.area   = atol(p2 + 1);
-  vis.stamp  = millis();
-}
-void serviceVision() {
-  while (PiSerial.available()) {
-    char ch = PiSerial.read();
-    if (ch == '\n' || ch == '\r') {
-      if (visLen > 0) { visBuf[visLen] = 0; parseVisionLine(visBuf); visLen = 0; }
-    } else if (visLen < sizeof(visBuf) - 1) {
-      visBuf[visLen++] = ch;
-    }
-  }
-}
-bool visionFresh() { return (millis() - vis.stamp) < 250; }
-bool pillarEngaged() {                    // correct colour + big enough + fresh
-  if (!visionFresh()) return false;
-  if (vis.colour == 'R') return vis.area >= AVOID_MIN_AREA_R;
-  if (vis.colour == 'G') return vis.area >= AVOID_MIN_AREA_G;
-  return false;
-}
+bool fsmStarted = false;
+
+RobotState    currentState = STATE_WAIT_START;
+bool          entered = false;
+unsigned long phaseT0 = 0;
+
+BlockColor lockedColor   = COLOR_NONE;
+bool       clockwiseMode = true;
+int        cornerCount   = 0;
+
+float targetHeading = 0.0;
+float laneHeading   = 0.0;
+
+BlockColor lastFirstColor = COLOR_NONE;
+
+// cached IMU, refreshed every loop
+bool          gImuFresh = false;
+float         gHeading  = 0.0;
+float         gYawRate  = 0.0;
+float         gPrevH    = 0.0;
+unsigned long gPrevHT   = 0;
+
+// cached colour, refreshed every loop
+BlockColor gRawColor = COLOR_NONE;
+
 // ============================================================
 // HELPERS
 // ============================================================
-float lastServoDeg = SERVO_TRUE_STRAIGHT;   // last commanded servo (for failsafe reverse)
 float wrapDeg(float angle) {
   while (angle > 180.0)  angle -= 360.0;
   while (angle < -180.0) angle += 360.0;
   return angle;
 }
+
 void tcaselect(uint8_t channel) {
   if (channel > 7) return;
   Wire.beginTransmission(TCA_ADDR);
   Wire.write(1 << channel);
   Wire.endTransmission();
 }
+
+void resetTCA() {
+  pinMode(TCA_RST_PIN, OUTPUT);
+  digitalWrite(TCA_RST_PIN, LOW);
+  delay(10);
+  digitalWrite(TCA_RST_PIN, HIGH);
+  delay(10);
+}
+
 void setMotorSpeed(int speed) {
   speed = constrain(speed, -255, 255);
-  if (speed > 0)      { analogWrite(RPWM_PIN, speed); analogWrite(LPWM_PIN, 0); }
-  else if (speed < 0) { analogWrite(RPWM_PIN, 0);     analogWrite(LPWM_PIN, -speed); }
-  else                { analogWrite(RPWM_PIN, 0);     analogWrite(LPWM_PIN, 0); }
+  if (speed > 0)      { analogWrite(MOT_RPWM_PIN, speed); analogWrite(MOT_LPWM_PIN, 0); }
+  else if (speed < 0) { analogWrite(MOT_RPWM_PIN, 0);     analogWrite(MOT_LPWM_PIN, -speed); }
+  else                { analogWrite(MOT_RPWM_PIN, 0);     analogWrite(MOT_LPWM_PIN, 0); }
 }
+
+float lastServoCmd = SERVO_TRUE_STRAIGHT;
+
 void setServoAngle(float angleDeg) {
-  angleDeg = constrain(angleDeg, 5.0, 115.0);
-  lastServoDeg = angleDeg;
-  steeringServo.writeMicroseconds((int)((angleDeg / 180.0) * 1000.0) + 1000);
+  angleDeg = constrain(angleDeg, SERVO_MAX_LEFT, SERVO_MAX_RIGHT);
+  lastServoCmd = angleDeg;
+  int pulse = (int)((angleDeg / 180.0) * (SERVO_MAX_PULSE_US - SERVO_MIN_PULSE_US)) + SERVO_MIN_PULSE_US;
+  steeringServo.writeMicroseconds(pulse);
 }
-void zeroEncoder() { TIM3->CNT = 0; }
-long readEncoder() { return (int16_t)TIM3->CNT; }
+
+// TIM5 encoder, negated so driving forward counts up
+void zeroEncoder() { TIM5->CNT = 0; }
+long readEncoder() { return -(int32_t)TIM5->CNT; }
 long absEnc(long v) { return v < 0 ? -v : v; }
+
+bool turnIsClockwise() {
+  return (lockedColor == COLOR_NONE) ? (lastFirstColor == COLOR_ORANGE) : clockwiseMode;
+}
+uint16_t turnSideMm() { return turnIsClockwise() ? lidarR : lidarL; }
+
 // ---- IMU ----
 float readYaw() {
   float qI = myIMU.getQuatI(), qJ = myIMU.getQuatJ();
@@ -194,83 +393,391 @@ float readYaw() {
                            (qReal * qReal + qI * qI - qJ * qJ - qK * qK));
   return yawRadians * (180.0 / PI);
 }
-float readHeading() { return fmod(readYaw() - initialYawOffset + 540.0, 360.0) - 180.0; }
-void zeroYaw() {   // startup-only blocking zero (car not running yet)
-  Serial.println(F("Waiting for valid IMU data to set Zero..."));
+
+float readHeading() {
+  float h = fmod(readYaw() - initialYawOffset + 540.0, 360.0) - 180.0;
+  return IMU_YAW_SIGN * h;
+}
+
+void zeroYaw() {
+  Serial.println(F("# zeroing yaw"));
   unsigned long t = millis();
   while (millis() - t < 3000) {
     if (myIMU.wasReset()) myIMU.enableGameRotationVector();
     if (myIMU.getSensorEvent() && myIMU.getSensorEventID() == SENSOR_REPORTID_GAME_ROTATION_VECTOR) {
       initialYawOffset = readYaw();
-      Serial.print(F("Zero Yaw locked at: ")); Serial.println(initialYawOffset);
+      Serial.print(F("# zero yaw ")); Serial.println(initialYawOffset);
       return;
     }
     delay(10);
   }
-  Serial.println(F("ERROR: no IMU event to zero!"));
+  Serial.println(F("# ERROR no IMU event to zero"));
 }
-// ---- floor colour (direct register read, NO delay) ----
+
+// ---- floor colour ----
 void readColor(uint16_t &r, uint16_t &g, uint16_t &b, uint16_t &c) {
-  if (!tcsConnected) { r = 0; g = 0; b = 0; c = 0; return; }
-  tcaselect(tcsChannel);
+  if (!tcsOk) { r = 0; g = 0; b = 0; c = 0; return; }
+  tcaselect(TCS_CH);
   Wire.beginTransmission(0x29);
   Wire.write(0x80 | 0x20 | 0x14);      // command | auto-increment | CDATAL
   Wire.endTransmission();
   Wire.requestFrom((uint8_t)0x29, (uint8_t)8);
   if (Wire.available() < 8) { r = 0; g = 0; b = 0; c = 0; return; }
-  c  =  (uint16_t)Wire.read();  c |= (uint16_t)Wire.read() << 8;
-  r  =  (uint16_t)Wire.read();  r |= (uint16_t)Wire.read() << 8;
-  g  =  (uint16_t)Wire.read();  g |= (uint16_t)Wire.read() << 8;
-  b  =  (uint16_t)Wire.read();  b |= (uint16_t)Wire.read() << 8;
+  c  = (uint16_t)Wire.read();  c |= (uint16_t)Wire.read() << 8;
+  r  = (uint16_t)Wire.read();  r |= (uint16_t)Wire.read() << 8;
+  g  = (uint16_t)Wire.read();  g |= (uint16_t)Wire.read() << 8;
+  b  = (uint16_t)Wire.read();  b |= (uint16_t)Wire.read() << 8;
 }
-const unsigned long COLOR_CONFIRM_MS = 6;
-BlockColor    pendingColor  = COLOR_NONE;
-unsigned long pendingStart  = 0;
-void resetColorDetector() { pendingColor = COLOR_NONE; pendingStart = 0; }
-BlockColor otherColor(BlockColor c) {
-  if (c == COLOR_ORANGE) return COLOR_BLUE;
-  if (c == COLOR_BLUE)   return COLOR_ORANGE;
-  return COLOR_NONE;
-}
-BlockColor rawFloorColor() {
+
+BlockColor classifyColor() {
   uint16_t r, g, b, c;
   readColor(r, g, b, c);
-  float total = r + g + b;
-  if (total <= 0) return COLOR_NONE;
-  float pR = ((float)r / total) * 100.0;
-  float pB = ((float)b / total) * 100.0;
-  if (pB > 36.0 && pR < 24.0)      return COLOR_BLUE;
-  if (pR > 35.0 && pB < 27.0)      return COLOR_ORANGE;
+  float total = (float)r + (float)g + (float)b;
+  if (total < 100.0f) return COLOR_NONE;
+  float pR = (r / total) * 100.0f;
+  float pB = (b / total) * 100.0f;
+  if (pR > 52.0f && pB < 18.0f) return COLOR_ORANGE;
+  if (pB > 23.0f && pR < 40.0f) return COLOR_BLUE;
   return COLOR_NONE;
 }
+
+const unsigned long COLOR_CONFIRM_MS = 6;
+BlockColor    pendingColor = COLOR_NONE;
+unsigned long pendingStart = 0;
+
+void resetColorDetector() { pendingColor = COLOR_NONE; pendingStart = 0; }
+
+bool colorMuted    = false;
+long colorMuteFrom = 0;
+
 BlockColor detectColor(BlockColor wantColor) {
-  BlockColor rawColor = rawFloorColor();
+  if (colorMuted) { resetColorDetector(); return COLOR_NONE; }
+  BlockColor rawColor = gRawColor;
   if (wantColor != COLOR_NONE && rawColor != wantColor) rawColor = COLOR_NONE;
-  if (rawColor == COLOR_NONE) { resetColorDetector(); return COLOR_NONE; }
+
+  if (rawColor == COLOR_NONE)   { resetColorDetector(); return COLOR_NONE; }
   if (rawColor != pendingColor) { pendingColor = rawColor; pendingStart = millis(); return COLOR_NONE; }
   if (millis() - pendingStart >= COLOR_CONFIRM_MS) { resetColorDetector(); return rawColor; }
   return COLOR_NONE;
 }
-// ---- ToF (non-blocking, signal-filtered) ----
-void serviceOneToF(VL53L1X &s, bool present, uint8_t ch, uint16_t &mm, bool &valid) {
-  if (!present) { valid = false; return; }
-  tcaselect(ch);
-  if (s.dataReady()) {
-    uint16_t d = s.read(false);
-    bool ok = (s.ranging_data.range_status == VL53L1X::RangeValid) &&
-              (s.ranging_data.peak_signal_count_rate_MCPS >= SIGNAL_MIN_MCPS) &&
-              (d > 0) && (d < TOF_MAX_VALID_MM);
-    valid = ok;
-    if (ok) mm = d;
+
+// ============================================================
+// LANE POSITION + PILLAR PASS PLANNER
+// ============================================================
+// Replaces the old main.ino laws (wall PD on R-L, vision PD holding the
+// pillar at +/-150 px). The simulator showed the pixel law cannot do the
+// far case: holding a fixed image offset at close range makes the car
+// ORBIT the pillar and hit it, and with the 160 deg lens a pillar is only
+// big enough to react to in the last ~50 cm.
+//
+// Now everything is a LATERAL POSITION in the lane (mm, + = left of the
+// lane centre):
+//   car      laneOffMm   from the two cone wall fits (perpendicular mm)
+//   pillar   track.lat   car lane position + the pillar's position in the
+//                        car frame (Pi: camera bearing + LiDAR range),
+//                        rotated by the car's yaw to the lane
+// Red must be passed on its right -> car lat <= pillar lat - PASS_CLEAR
+// Green on its left               -> car lat >= pillar lat + PASS_CLEAR
+// The car aims for the lane position closest to the centre that satisfies
+// every pillar it is approaching or still alongside, and steers there with
+// a yaw command (heading = laneHeading + yaw) that the IMU PID tracks. The
+// yaw points at a PASS POINT - the target lane position PASS_LEAD_MM before
+// the pillar - so it sharpens as the pillar nears and arrives in time (a
+// proportional law eases off near the target and arrived too late in sim).
+// With no pillar in play the target is the lane centre - that IS the wall
+// centring now.
+const float    CORRIDOR_MM       = 1000.0;
+const float    CAR_HALF_W_MM     = 57.0;
+const float    PILLAR_HALF_MM    = 25.0;
+const float    PASS_MARGIN_MM    = 80.0;    // air gap car side <-> pillar face
+const float    PASS_CLEAR_MM     = PILLAR_HALF_MM + CAR_HALF_W_MM + PASS_MARGIN_MM;  // 162
+const float    WALL_MARGIN_MM    = 45.0;
+const float    LANE_LIMIT_MM     = CORRIDOR_MM / 2 - CAR_HALF_W_MM - WALL_MARGIN_MM; // 398
+const float    CENTRE_AIM_MM     = 600.0;   // centring: aim at the lane centre this far ahead
+const float    PASS_LEAD_MM      = 160.0;   // be at the pass position this far BEFORE the pillar
+                                            //   (half car length + pillar half + margin)
+const float    PASS_AIM_MIN_MM   = 120.0;   // shortest aim distance (sharpest swerve)
+const float    HOLD_AIM_MM       = 250.0;   // alongside a pillar: gentle hold
+const float    OFF_JUMP_MM       = 120.0;   // lane offset can't move this much in one scan
+const float    CENTRE_YAW_MAX    = 20.0;    // deg, plain centring
+const float    PASS_YAW_MAX      = 75.0;    // deg, while a pillar is in play (sim: 45 too little
+                                            //   for a far-side pillar; 75 reaches the most layouts)
+const float    UNK_COMMIT_MM     = 400.0;   // unknown colour this close -> dodge to the roomier side
+const float    TURN_RADIUS_MM    = 270.0;   // full-lock radius (worse side) for the reach estimate
+const float    GIVEUP_LEAD_MM    = 60.0;    // reach is judged to this far before the pillar
+const bool     ALLOW_GIVE_UP     = true;    // correct side unreachable -> pass on the other side
+                                            //   rather than hit it (check your rulebook penalty)
+const float    PLAN_MAX_AHEAD_MM = 1600.0;  // ignore sightings farther ahead
+const float    PASS_HOLD_MM      = 130.0;   // keep a pillar's side until it is this far behind
+const float    TRACK_MATCH_MM    = 200.0;   // same pillar if within this (along and lateral)
+const uint8_t  TRACK_CONFIRM     = 2;       // sightings before a pillar steers the car
+const float    TRACK_FORGET_MM   = 300.0;   // unconfirmed and not seen for this far -> dropped
+const uint16_t LANE_VALID_MAX_MM = 1100;    // cone farther than this = no wall on that side
+const float    TICKS_PER_MM      = TICKS_PER_CM / 10.0;
+
+struct PillarTrack { bool used; int color; float lat; float along; uint8_t hits; float lastSeen; bool flipped; };
+const int   MAX_TRACKS = 4;
+PillarTrack tracks[MAX_TRACKS];
+
+float laneOffMm   = 0.0;     // + = car left of lane centre
+bool  laneOffOk   = false;
+float laneAlongMm = 0.0;     // distance along the lane since the last corner
+long  laneAlongEnc = 0;
+float latYawCmd   = 0.0;     // + = yaw left of laneHeading
+float latTarget   = 0.0;
+bool  passActive  = false;
+bool  plannerEnabled = false;  // DRIVE / FINAL only - sightings mid-turn are in the wrong lane frame
+
+void clearTracks() { for (int i = 0; i < MAX_TRACKS; i++) tracks[i].used = false; passActive = false; }
+void resetLaneAlong() { laneAlongMm = 0.0; laneAlongEnc = readEncoder(); }
+
+// A pillar is "seen" when the latest line carries red/green and it is fresh.
+bool pillarSeen() { return !lidarStale && visColor != VIS_NONE; }
+
+bool laneOffsetRaw(float &off) {
+  bool l = coneL <= LANE_VALID_MAX_MM, r = coneR <= LANE_VALID_MAX_MM;
+  if (l && r) {
+    float both = 0.5f * ((float)coneR - (float)coneL);
+    float sum  = (float)coneL + (float)coneR;
+    if (fabs(sum - CORRIDOR_MM) < 150.0f || !laneOffOk) { off = both; return true; }
+    // walls don't add up to the corridor: one cone is fitted to something
+    // else (a pillar beside the car). Keep the side that agrees with before.
+    float fromL = CORRIDOR_MM / 2 - coneL, fromR = coneR - CORRIDOR_MM / 2;
+    off = (fabs(fromL - laneOffMm) < fabs(fromR - laneOffMm)) ? fromL : fromR;
+    return true;
   }
+  if (l)      { off = CORRIDOR_MM / 2 - coneL;               return true; }
+  if (r)      { off = coneR - CORRIDOR_MM / 2;               return true; }
+  return false;
 }
-// cached sensor readings, refreshed every loop
-bool          gImuFresh = false;
-float         gHeading  = 0.0;
-float         gYawRate  = 0.0;
-float         gPrevH    = 0.0;
-unsigned long gPrevHT   = 0;
+
+uint8_t offJumps = 0;
+// The car moves < 40 mm sideways per LiDAR rev; a bigger jump is a bad fit.
+// Accept it only if it persists for 3 revs (then it's real, e.g. after a corner).
+bool laneOffset(float &off) {
+  float o;
+  if (!laneOffsetRaw(o)) { offJumps = 0; return false; }
+  if (laneOffOk && fabs(o - off) > OFF_JUMP_MM && offJumps < 3) {
+    if (lidarNewRev) offJumps++;
+    return true;                                           // keep the previous value
+  }
+  offJumps = 0;
+  off = o;
+  return true;
+}
+
+void addSighting() {
+  if (!pillarSeen() || !pillarXYValid || !laneOffOk) return;
+  float yaw = wrapDeg(gHeading - laneHeading) * DEG_TO_RAD;
+  float along  = pillarX * cosf(yaw) - pillarY * sinf(yaw);
+  float latRel = pillarX * sinf(yaw) + pillarY * cosf(yaw);
+  float lat    = laneOffMm + latRel;
+  if (along < -50.0f || along > PLAN_MAX_AHEAD_MM) return;
+  if (fabs(lat) > CORRIDOR_MM / 2 + 50.0f) return;       // a pillar in ANOTHER straight
+  float at = laneAlongMm + along;
+
+  int slot = -1, freeSlot = -1, oldest = 0;
+  for (int i = 0; i < MAX_TRACKS; i++) {
+    if (!tracks[i].used) { if (freeSlot < 0) freeSlot = i; continue; }
+    if (tracks[i].color == visColor &&
+        fabs(tracks[i].along - at) < TRACK_MATCH_MM && fabs(tracks[i].lat - lat) < TRACK_MATCH_MM) { slot = i; break; }
+    if (tracks[i].along < tracks[oldest].along) oldest = i;
+  }
+  if (slot >= 0) {                                         // refine
+    tracks[slot].lat   += 0.5f * (lat - tracks[slot].lat);
+    tracks[slot].along += 0.5f * (at  - tracks[slot].along);
+    tracks[slot].lastSeen = laneAlongMm;
+    if (tracks[slot].hits < 255) tracks[slot].hits++;
+    if (tracks[slot].hits == TRACK_CONFIRM) {
+      Serial.print(F("# pillar ")); Serial.print(visColor == VIS_RED ? F("RED") : F("GREEN"));
+      Serial.print(F(" lat=")); Serial.print((int)tracks[slot].lat);
+      Serial.print(F(" at=")); Serial.println((int)tracks[slot].along);
+    }
+    return;
+  }
+  slot = (freeSlot >= 0) ? freeSlot : oldest;
+  tracks[slot].used = true; tracks[slot].color = visColor;
+  tracks[slot].lat = lat;   tracks[slot].along = at;
+  tracks[slot].hits = 1;    tracks[slot].lastSeen = laneAlongMm; tracks[slot].flipped = false;
+}
+
+// Most sideways travel the car can make in s mm of lane, starting at yaw
+// psi0 (rad, + = already angled TOWARD the target): arc at full lock up to
+// PASS_YAW_MAX, then straight at that angle.
+float latReach(float s, float psi0) {
+  if (s <= 0) return 0;
+  float R = TURN_RADIUS_MM, phi = PASS_YAW_MAX * DEG_TO_RAD;
+  psi0 = constrain(psi0, -phi, phi);
+  float aArc = R * (sinf(phi) - sinf(psi0));            // lane distance used by the arc
+  if (s <= aArc) {                                      // still on the arc when we get there
+    float sp = asinf(constrain(sinf(psi0) + s / R, -1.0f, 1.0f));
+    return R * (cosf(psi0) - cosf(sp));
+  }
+  return R * (cosf(psi0) - cosf(phi)) + (s - aArc) * tanf(phi);
+}
+
+void updatePlanner() {
+  // lane distance: encoder projected onto the lane direction
+  long enc = readEncoder();
+  float dmm = (enc - laneAlongEnc) / TICKS_PER_MM;
+  laneAlongEnc = enc;
+  laneAlongMm += dmm * cosf(wrapDeg(gHeading - laneHeading) * DEG_TO_RAD);
+
+  if (!lidarNewFrame) return;
+  laneOffOk = laneOffset(laneOffMm);
+  if (!plannerEnabled) { latYawCmd = 0.0f; passActive = false; return; }
+  addSighting();
+
+  // tracks in play: everything still within PASS_HOLD behind, up to and
+  // including the NEAREST pillar ahead (farther ones wait their turn)
+  float nearestAhead = 1e9;
+  for (int i = 0; i < MAX_TRACKS; i++) {
+    if (!tracks[i].used) continue;
+    float rel = tracks[i].along - laneAlongMm;
+    if (rel < -PASS_HOLD_MM) { tracks[i].used = false; continue; }   // passed
+    if (tracks[i].hits < TRACK_CONFIRM) {                            // not trusted yet
+      if (laneAlongMm - tracks[i].lastSeen > TRACK_FORGET_MM) tracks[i].used = false;
+      continue;
+    }
+    if (rel > 0 && rel < nearestAhead) nearestAhead = rel;
+  }
+  float lo = -LANE_LIMIT_MM, hi = LANE_LIMIT_MM;
+  float urgentRel = 1e9, urgentBound = 0; bool any = false;
+  float aimMm = CENTRE_AIM_MM;
+  for (int i = 0; i < MAX_TRACKS; i++) {
+    if (!tracks[i].used || tracks[i].hits < TRACK_CONFIRM) continue;
+    float rel = tracks[i].along - laneAlongMm;
+    if (rel > nearestAhead + 1.0f) continue;
+    any = true;
+    float bound;
+    bool passRight = (tracks[i].color == VIS_RED) != tracks[i].flipped;   // car goes to the pillar's right
+    if (passRight) { bound = tracks[i].lat - PASS_CLEAR_MM; if (bound < hi) hi = bound; }
+    else           { bound = tracks[i].lat + PASS_CLEAR_MM; if (bound > lo) lo = bound; }
+    if (rel < urgentRel) { urgentRel = rel; urgentBound = bound; }
+  }
+  passActive = any;
+  float target = 0.0f;                                   // lane centre
+  if (lo > hi) target = urgentBound;                     // conflict: most urgent pillar wins
+  else         target = constrain(target, lo, hi);
+  if (any) {
+    // aim at the pass point: target lane position, PASS_LEAD before the
+    // nearest pillar ahead - so the swerve gets sharper as it gets closer
+    // and arrives in time. Alongside / past it: gentle hold.
+    if (nearestAhead < 1e8 && nearestAhead > PASS_LEAD_MM)
+      aimMm = fmaxf(nearestAhead - PASS_LEAD_MM, PASS_AIM_MIN_MM);
+    else
+      aimMm = HOLD_AIM_MM;
+
+    // Reach check: can the car still get to the pass position before the
+    // nearest pillar? If not, commit to its other side instead of hitting it.
+    if (ALLOW_GIVE_UP && laneOffOk && nearestAhead < 1e8 && nearestAhead > 0) {
+      float need = fabs(target - laneOffMm);
+      float sAvail = nearestAhead - GIVEUP_LEAD_MM;
+      float yawNow = wrapDeg(gHeading - laneHeading) * DEG_TO_RAD;       // + = left
+      float psi0 = (target > laneOffMm) ? yawNow : -yawNow;               // + = toward target
+      if (need > 60.0f && need > latReach(sAvail, psi0) + 30.0f) {
+        for (int i = 0; i < MAX_TRACKS; i++) {
+          if (!tracks[i].used || tracks[i].hits < TRACK_CONFIRM || tracks[i].flipped) continue;
+          if (fabs((tracks[i].along - laneAlongMm) - nearestAhead) > 1.0f) continue;
+          bool passRight = (tracks[i].color == VIS_RED);
+          float other = passRight ? tracks[i].lat + PASS_CLEAR_MM : tracks[i].lat - PASS_CLEAR_MM;
+          float needO = fabs(other - laneOffMm);
+          float psiO  = (other > laneOffMm) ? yawNow : -yawNow;
+          // switch only if the other side can really be reached from here -
+          // late in the swerve it can't, and swinging back is worse
+          if (fabs(other) <= LANE_LIMIT_MM && needO < need && needO <= latReach(sAvail, psiO)) {
+            tracks[i].flipped = true;
+            target = other;
+            Serial.print(F("# give up: ")); Serial.print(tracks[i].color == VIS_RED ? F("RED") : F("GREEN"));
+            Serial.print(F(" unreachable, need ")); Serial.print((int)need);
+            Serial.print(F(" in ")); Serial.println((int)sAvail);
+          }
+        }
+      }
+    }
+  }
+
+  // ---- LiDAR object whose colour is still unknown ----
+  // The camera only covers ~+/-48 deg, so a pillar near the far wall can be
+  // out of view until too late. Line up with it (it comes into view and both
+  // passing sides stay open); if it is still unnamed at UNK_COMMIT_MM, dodge
+  // to the side with more room so we never drive into it.
+  if (unknownXYValid && laneOffOk) {
+    float yaw = wrapDeg(gHeading - laneHeading) * DEG_TO_RAD;
+    float uAlong = unknownX * cosf(yaw) - unknownY * sinf(yaw);
+    float uLat   = laneOffMm + unknownX * sinf(yaw) + unknownY * cosf(yaw);
+    bool known = false;                                  // same place as a named pillar?
+    for (int i = 0; i < MAX_TRACKS; i++)
+      if (tracks[i].used && tracks[i].hits >= TRACK_CONFIRM &&
+          fabs(tracks[i].along - (laneAlongMm + uAlong)) < TRACK_MATCH_MM &&
+          fabs(tracks[i].lat - uLat) < TRACK_MATCH_MM) known = true;
+    if (!known && uAlong > 100.0f && uAlong < PLAN_MAX_AHEAD_MM &&
+        fabs(uLat) < CORRIDOR_MM / 2 - 30.0f && uAlong < nearestAhead - 150.0f) {
+      // only pillars already alongside may constrain us now
+      float lo2 = -LANE_LIMIT_MM, hi2 = LANE_LIMIT_MM;
+      for (int i = 0; i < MAX_TRACKS; i++) {
+        if (!tracks[i].used || tracks[i].hits < TRACK_CONFIRM || tracks[i].along - laneAlongMm > 50.0f) continue;
+        if ((tracks[i].color == VIS_RED) != tracks[i].flipped) hi2 = fminf(hi2, tracks[i].lat - PASS_CLEAR_MM);
+        else                                                  lo2 = fmaxf(lo2, tracks[i].lat + PASS_CLEAR_MM);
+      }
+      float t = (uAlong > UNK_COMMIT_MM) ? uLat
+              : (uLat < 0 ? uLat + PASS_CLEAR_MM : uLat - PASS_CLEAR_MM);
+      target = (lo2 <= hi2) ? constrain(t, lo2, hi2) : t;
+      aimMm  = (uAlong > UNK_COMMIT_MM) ? fmaxf(uAlong - UNK_COMMIT_MM, 250.0f)
+                                        : fmaxf(uAlong - PASS_LEAD_MM, PASS_AIM_MIN_MM);
+      passActive = true;
+    }
+  }
+  latTarget = constrain(target, -LANE_LIMIT_MM, LANE_LIMIT_MM);
+
+  if (!laneOffOk) { latYawCmd = 0.0f; return; }          // no walls: just hold heading
+  float ymax = passActive ? PASS_YAW_MAX : CENTRE_YAW_MAX;
+  // + lateral error = target is to the LEFT = yaw left
+  latYawCmd = constrain(atan2f(latTarget - laneOffMm, aimMm) / DEG_TO_RAD, -ymax, ymax);
+}
+
+// ============================================================
+// LEVELLING  - pull the IMU lane heading onto the fitted wall direction
+// ============================================================
+// The Pi fits both walls in 45 deg cones and reports the car's yaw
+// relative to them (wallAngDeg, + = pointing left). The lane direction is
+// then gHeading - wallAngDeg. That estimate is noisy per rev but has no
+// drift, the IMU is smooth but drifts - so the lane heading is nudged a
+// small step toward it once per rev. Only while the fit is trustworthy:
+// on a straight (past the post-corner lockout), both cone walls inside a
+// corridor width, no pillar close enough to be steering the car, and the
+// estimate within LEVEL_MAX_DIFF of what the IMU already believes (a big
+// disagreement is a bad fit, not drift).
+const float LEVEL_GAIN        = 0.05;   // fraction of the error removed per rev (10 Hz)
+const float LEVEL_MAX_STEP    = 0.3;    // deg per rev, hard cap
+const float LEVEL_MAX_DIFF    = 8.0;    // deg - reject bigger disagreements
+const float LEVEL_MAX_WALLANG = 20.0;   // deg - car too yawed for a clean fit
+
+bool  levelEnabled   = false;           // set per state; off in turns / recover
+float levelTotalDeg  = 0.0;             // running total, logged per corner
+
+void updateLevel() {
+  if (!levelEnabled || !lidarNewRev || lidarStale || !wallAngValid) return;   // gHeading = latest IMU
+  if (coneL > LANE_VALID_MAX_MM || coneR > LANE_VALID_MAX_MM) return;
+  if (fabs(wallAngDeg) > LEVEL_MAX_WALLANG) return;
+  if (passActive) return;                  // swerving round a pillar: not level
+
+  float est  = wrapDeg(gHeading - wallAngDeg);
+  float diff = wrapDeg(est - laneHeading);
+  if (fabs(diff) > LEVEL_MAX_DIFF) return;
+
+  float step = constrain(LEVEL_GAIN * diff, -LEVEL_MAX_STEP, LEVEL_MAX_STEP);
+  laneHeading   = wrapDeg(laneHeading + step);
+  targetHeading = laneHeading;
+  levelTotalDeg += step;
+}
+
+// ---- called once at the top of every loop ----
 void serviceSensors() {
+  lidarNewFrame = false;
+  lidarNewRev   = false;
+  serviceLidar();
+
   gImuFresh = false;
   if (myIMU.wasReset()) myIMU.enableGameRotationVector();
   if (myIMU.getSensorEvent() &&
@@ -283,72 +790,74 @@ void serviceSensors() {
     gPrevH = h; gPrevHT = now;
     gHeading = h;
   }
-  serviceOneToF(tofF, tofFok, CH_FRONT, tofFront, tofFrontValid);
-  serviceOneToF(tofL, tofLok, CH_LEFT,  tofLeft,  tofLeftValid);
-  serviceOneToF(tofR, tofRok, CH_RIGHT, tofRight, tofRightValid);
-  serviceVision();
+
+  gRawColor = classifyColor();
+  if (currentState != STATE_FINISHED) {
+    digitalWrite(LED2_PIN, gRawColor == COLOR_ORANGE ? HIGH : LOW);
+    digitalWrite(LED3_PIN, gRawColor == COLOR_BLUE   ? HIGH : LOW);
+  }
+
+  updatePlanner();
+  updateLevel();
 }
+
 // ============================================================
 // SYSTEM INITIALIZATION
 // ============================================================
-void initOneToF(VL53L1X &s, bool &ok, uint8_t ch, const __FlashStringHelper *name) {
-  tcaselect(ch);
-  s.setBus(&Wire);
-  s.setTimeout(100);
-  ok = s.init();
-  if (ok) {
-    s.setDistanceMode(VL53L1X::Short);
-    s.setMeasurementTimingBudget(50000);
-    s.startContinuous(50);
-  }
-  Serial.print(name); Serial.println(ok ? F(" ready") : F(" FAILED"));
-}
 void initHardware() {
-  pinMode(RPWM_PIN, OUTPUT);
-  pinMode(LPWM_PIN, OUTPUT);
-  pinMode(DRV_EN_PIN, OUTPUT);
-  pinMode(START_BTN_PIN, INPUT_PULLUP);
-  digitalWrite(DRV_EN_PIN, HIGH);
+  pinMode(MOT_RPWM_PIN, OUTPUT);
+  pinMode(MOT_LPWM_PIN, OUTPUT);
   setMotorSpeed(0);
-  steeringServo.attach(SERVO_PIN, 1000, 2000);
+
+  pinMode(LED1_PIN, OUTPUT);
+  pinMode(LED2_PIN, OUTPUT);
+  pinMode(LED3_PIN, OUTPUT);
+  digitalWrite(LED1_PIN, LOW);
+  digitalWrite(LED2_PIN, LOW);
+  digitalWrite(LED3_PIN, LOW);
+
+  steeringServo.attach(SERVO_PIN, SERVO_MIN_PULSE_US, SERVO_MAX_PULSE_US);
   setServoAngle(SERVO_TRUE_STRAIGHT);
+
+  // ---- TIM5 encoder on PA0 / PA1 (AF2) ----
   __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_TIM3_CLK_ENABLE();
+  __HAL_RCC_TIM5_CLK_ENABLE();
   GPIO_InitTypeDef GPIO_InitStruct = {0};
-  GPIO_InitStruct.Pin       = GPIO_PIN_6 | GPIO_PIN_7;
+  GPIO_InitStruct.Pin       = GPIO_PIN_0 | GPIO_PIN_1;
   GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
   GPIO_InitStruct.Pull      = GPIO_PULLUP;
   GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
+  GPIO_InitStruct.Alternate = GPIO_AF2_TIM5;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
   TIM_Encoder_InitTypeDef sConfig = {0};
-  static TIM_HandleTypeDef htim3 = {0};
-  htim3.Instance         = TIM3;
-  htim3.Init.Prescaler   = 0;
-  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period      = 65535;
+  static TIM_HandleTypeDef htim5 = {0};
+  htim5.Instance         = TIM5;
+  htim5.Init.Prescaler   = 0;
+  htim5.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim5.Init.Period      = 0xFFFFFFFF;
   sConfig.EncoderMode  = TIM_ENCODERMODE_TI12;
   sConfig.IC1Polarity  = TIM_ICPOLARITY_RISING;
   sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC2Polarity  = TIM_ICPOLARITY_RISING;
   sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
-  HAL_TIM_Encoder_Init(&htim3, &sConfig);
-  HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
-  Wire.setSDA(PB7);
-  Wire.setSCL(PB6);
+  HAL_TIM_Encoder_Init(&htim5, &sConfig);
+  HAL_TIM_Encoder_Start(&htim5, TIM_CHANNEL_ALL);
+
+  // ---- I2C + colour ----
+  resetTCA();
+  Wire.setSCL(I2C_SCL);
+  Wire.setSDA(I2C_SDA);
   Wire.begin();
   Wire.setClock(400000);
   delay(100);
-  for (uint8_t i = 0; i < 8; i++) {
-    tcaselect(i);
-    delay(10);
-    if (tcs.begin()) { tcsConnected = true; tcsChannel = i;
-      Serial.print(F("TCS34725 on TCA channel ")); Serial.println(i); break; }
-  }
-  if (!tcsConnected) Serial.println(F("WARNING: TCS34725 not detected!"));
-  initOneToF(tofL, tofLok, CH_LEFT,  F("ToF LEFT  (CH1)"));
-  initOneToF(tofR, tofRok, CH_RIGHT, F("ToF RIGHT (CH3)"));
-  initOneToF(tofF, tofFok, CH_FRONT, F("ToF FRONT (CH4)"));
+
+  tcaselect(TCS_CH);
+  delay(10);
+  tcsOk = tcs.begin();
+  Serial.println(tcsOk ? F("# colour CH4 READY") : F("# colour CH4 FAILED"));
+
+  // ---- IMU over SPI1 ----
   SPI_IMU.begin();
   if (myIMU.beginSPI(IMU_CS_PIN, IMU_INT_PIN, IMU_RST_PIN, 3000000, SPI_IMU)) {
     delay(500);
@@ -356,324 +865,296 @@ void initHardware() {
     delay(100);
     myIMU.getSensorEvent();
     zeroYaw();
+  } else {
+    Serial.println(F("# ERROR IMU not found"));
   }
 }
+
 // ============================================================
-// HEADING PID  (Kp=2, cached sensor data, acts only on fresh sample)
+// DRIVE STEERING  = heading PID (with wall-centre offset) blended with
+//                   the pillar PD by pillar area - old main.ino blend
 // ============================================================
 const float HEAD_KP        = 2.0;
-const float HEAD_KD        = 0.0;
-const float HEAD_KI        = 0.0;
 const float YAW_FILT_ALPHA = 0.35;
-const float SERVO_SLEW     = 2.5;
+const float SERVO_SLEW     = 2.5;     // servo deg per IMU update (~100 Hz)
 const float INTEGRAL_CLAMP = 300.0;
-float         pidPrevError = 0.0;
+const float HEAD_KI        = 0.0;
+const float HEAD_KD        = 0.0;
+
 unsigned long pidPrevTime  = 0;
 float         pidIntegral  = 0.0;
 float         yawFilt      = 0.0;
 float         prevServoCmd = SERVO_TRUE_STRAIGHT;
+
 void resetHeadingPid() {
-  pidPrevError = 0.0;  pidPrevTime = millis();
+  pidPrevTime  = millis();
   pidIntegral  = 0.0;  yawFilt = 0.0;
   prevServoCmd = SERVO_TRUE_STRAIGHT;
 }
-void updateHeadingPid(float heading) {
+
+// usePlanner = follow the lane-position planner (centring + pillars);
+// false = plain heading hold on laneH.
+void updateDriveSteer(float laneH, bool usePlanner) {
   if (!gImuFresh) return;
   unsigned long now = millis();
   yawFilt += YAW_FILT_ALPHA * (gYawRate - yawFilt);
   float dt = (now - pidPrevTime) / 1000.0;
   if (dt <= 0.0) dt = 0.001;
-  float error = wrapDeg(heading - gHeading);
+
+  float target = usePlanner ? wrapDeg(laneH + latYawCmd) : laneH;   // + = left
+  float error  = wrapDeg(target - gHeading);
   pidIntegral += error * dt;
   pidIntegral  = constrain(pidIntegral, -INTEGRAL_CLAMP, INTEGRAL_CLAMP);
   float correction = HEAD_KP * error + HEAD_KI * pidIntegral - HEAD_KD * yawFilt;
-  float want = SERVO_TRUE_STRAIGHT - correction;
+
+  float want = SERVO_TRUE_STRAIGHT - correction;             // below straight = left
   float dcmd = constrain(want - prevServoCmd, -SERVO_SLEW, SERVO_SLEW);
   float cmd  = constrain(prevServoCmd + dcmd, SERVO_MAX_LEFT, SERVO_MAX_RIGHT);
   if (cmd <= SERVO_MAX_LEFT || cmd >= SERVO_MAX_RIGHT) pidIntegral -= error * dt;
   setServoAngle(cmd);
   prevServoCmd = cmd;
-  pidPrevError = error;
   pidPrevTime  = now;
 }
+
 // ============================================================
-// EASED TURN LAW  (shared by corner turns, realign, avoidance - NO settle)
+// EASED TURN LAW - wider arc than the open round
 // ============================================================
-const float TURN_KP        = 2.5;
-const float TURN_MAX_STEER = 55.0;
-const float TURN_MIN_STEER = 8.0;
-const float TURN_KV        = 3.5;
-const int   TURN_MAX_PWM   = 130;
-const int   TURN_MIN_PWM   = 100;
-const float TURN_STOP_DEG  = 0.3;
+// Full lock is 27 cm (left) / 25 cm (right). The obstacle round needs
+// room for pillars in the corner section, so the arc is capped at
+// TURN_LOCK_FRACTION of each side's travel (0.70 -> roughly 35-38 cm
+// radius; measure on the mat and tune this one number). The last
+// TURN_MAX_STEER / TURN_KP degrees of heading error still ease off.
+const float TURN_LOCK_FRACTION   = 0.70;
+const float TURN_KP              = 2.5;
+const float TURN_MAX_STEER_LEFT  = (SERVO_TRUE_STRAIGHT - SERVO_MAX_LEFT)  * TURN_LOCK_FRACTION;  // ~39.6
+const float TURN_MAX_STEER_RIGHT = (SERVO_MAX_RIGHT - SERVO_TRUE_STRAIGHT) * TURN_LOCK_FRACTION;  // ~44.5
+const float TURN_MIN_STEER       = 8.0;
+const int   TURN_PWM             = DRIVE_PWM;
+const float TURN_STOP_DEG        = 15.0;   // hand over to DRIVE this close to the new heading:
+                                            //   the heading PID finishes the last degrees while the
+                                            //   pillar planner is already live. (sim: finishing the
+                                            //   arc to 0.3 deg took ~600 mm of the next straight and
+                                            //   left a pillar there no room)
+const float TURN_CAP_CM          = 150.0;   // odometry backstop (wider arc = longer path)
+
 long turnStartTicks = 0;
 long turnCapTicks   = 0;
-bool turnArcStep(float target) {         // one arc step; true when finished
+
+bool turnArcStep(float target) {
   if (absEnc(readEncoder() - turnStartTicks) >= turnCapTicks) return true;
   if (gImuFresh) {
     float err = wrapDeg(target - gHeading);
     if (fabs(err) < TURN_STOP_DEG) return true;
-    float mag   = fabs(err);
-    float steer = constrain(TURN_KP * mag, TURN_MIN_STEER, TURN_MAX_STEER);
-    int   pwm   = (int)constrain(TURN_KV * mag, (float)TURN_MIN_PWM, (float)TURN_MAX_PWM);
-    float servo = (err > 0) ? (SERVO_TRUE_STRAIGHT - steer) : (SERVO_TRUE_STRAIGHT + steer);
+    float mag      = fabs(err);
+    float maxSteer = (err > 0) ? TURN_MAX_STEER_LEFT : TURN_MAX_STEER_RIGHT;
+    float steer    = constrain(TURN_KP * mag, TURN_MIN_STEER, maxSteer);
+    float servo    = (err > 0) ? (SERVO_TRUE_STRAIGHT - steer) : (SERVO_TRUE_STRAIGHT + steer);
     setServoAngle(servo);
-    setMotorSpeed(pwm);
+    setMotorSpeed(TURN_PWM);
   }
   return false;
 }
+
 // ============================================================
 // STATE HELPERS + working vars
 // ============================================================
-RobotState currentState = STATE_INIT;
-bool          entered   = false;
-unsigned long phaseT0   = 0;
-BlockColor lockedColor   = COLOR_NONE;
-bool       clockwiseMode = true;
-int        cornerCount   = 0;
-float targetHeading = 0.0;
-float laneHeading   = 0.0;
-float      lastGapCm        = 0.0;
-BlockColor lastFirstColor   = COLOR_NONE;
-long       cornerFirstTicks = 0;
-bool       gapMeasured      = false;
-float gapRefCm  = GAP_THRESHOLD_CM;
-bool  gapRefSet = false;
-BlockColor dcWantFirst;
-bool       dcFirstTurn;
+void goState(RobotState s) { currentState = s; entered = false; }
+
+BlockColor dcWantColor;
 bool       dcColorArmed;
 long       dcBaseTicks;
 long       dcLockoutTicks;
 long       dcSafetyTicks;
-unsigned long sideInvalidStart = 0;
-float      turnTarget;
-float      turnAmount;
-BlockColor turnPartner;
-bool       turnGotSecond;
-uint8_t    lcPhase;
-long       lcBaseTicks;
-long       lcTargetTicks;
-long       fsTargetTicks;
-// ---- avoidance sub-FSM state ----
-uint8_t  avoidPhase    = 0;   // 1 swerve,2 straighten,3 hold,4 return,5 realign,6 backup
-char     avoidColour   = 'N';
-float    avoidSteerDeg = AVOID_STEER_DEG;
-float    avoidOutServo  = SERVO_TRUE_STRAIGHT;
-float    avoidBackServo = SERVO_TRUE_STRAIGHT;
-uint16_t avoidTargetMm  = AVOID_SIDE_NEAR_MM;
-long     avoidRefTicks  = 0;
-long     avoidOutTicks  = 0;
-long     avoidFwdRef    = 0;
-long     avoidBackupRef = 0;
-float    backupServo    = SERVO_TRUE_STRAIGHT;
-unsigned long avoidGoneStart = 0;
-void goState(RobotState s) { currentState = s; entered = false; }
-void finishLaneCorrect() {
+
+float turnTarget;
+float turnAmount;
+
+long    fsTargetTicks;
+
+void finishCorner() {
   targetHeading = laneHeading;
   if (cornerCount >= TARGET_CORNERS) goState(STATE_FINAL_STRAIGHT);
   else                               goState(STATE_DRIVE_TO_CORNER);
 }
+
 // ============================================================
-// OFFSET-BASED PILLAR AVOIDANCE
+// STATE: RECOVER  (wall too close - back off, then resume)
+// Same as the open round. Not entered while the camera sees a pillar -
+// a short front reading is then the pillar, and the pillar PD handles it.
 // ============================================================
-uint16_t avoidTargetSideMm() {
-  // pillar centred (|dx|->0)  => move a lot  => small target (NEAR wall)
-  // pillar already off-side   => move little => large target (FAR wall)
-  float k = fabs((float)vis.dx) / (float)DX_SPAN;
-  k = constrain(k, 0.0f, 1.0f);
-  float t = AVOID_SIDE_NEAR_MM + (AVOID_SIDE_FAR_MM - AVOID_SIDE_NEAR_MM) * k;
-  if (t < SIDE_SAFE_MM) t = SIDE_SAFE_MM;
-  return (uint16_t)t;
+RobotState recoverReturnState   = STATE_DRIVE_TO_CORNER;
+bool       recoverReturnEntered = false;
+long       recoverBaseTicks     = 0;
+int        recoverTries         = 0;
+
+void enterRecovery() {
+  recoverReturnState   = currentState;
+  recoverReturnEntered = entered;
+  levelEnabled  = false;             // reversing near a wall: no levelling
+  plannerEnabled = false;
+  colorMuted    = true;
+  colorMuteFrom = readEncoder();
+  currentState  = STATE_RECOVER;
+  entered = false;
 }
-void avoidComputeServos() {
-  bool green = (avoidColour == 'G');
-  avoidOutServo  = green ? (SERVO_TRUE_STRAIGHT - avoidSteerDeg)   // GREEN -> swerve LEFT
-                         : (SERVO_TRUE_STRAIGHT + avoidSteerDeg);  // RED   -> swerve RIGHT
-  avoidBackServo = green ? (SERVO_TRUE_STRAIGHT + avoidSteerDeg)
-                         : (SERVO_TRUE_STRAIGHT - avoidSteerDeg);
-}
-void startAvoid() {
-  avoidColour   = vis.colour;
-  avoidSteerDeg = AVOID_STEER_DEG;
-  avoidComputeServos();
-  avoidTargetMm  = avoidTargetSideMm();       // <-- the OFFSET, from the pillar's dx
-  avoidRefTicks  = readEncoder();
-  avoidFwdRef    = readEncoder();
-  avoidGoneStart = 0;
-  avoidPhase = 1;
-  setServoAngle(avoidOutServo);
-  setMotorSpeed(AVOID_PWM);
-  Serial.print(F("[AVOID] "));
-  Serial.print(avoidColour == 'G' ? F("GREEN->left") : F("RED->right"));
-  Serial.print(F(" target=")); Serial.print(avoidTargetMm); Serial.println(F("mm"));
-}
-void avoidStep() {
-  bool green = (avoidColour == 'G');
-  // ---- FRONT FAILSAFE: about to clip -> reverse on last angle, boost, retry ----
-  if (avoidPhase >= 1 && avoidPhase <= 4 &&
-      tofFrontValid && tofFront < FRONT_STOP_MM &&
-      absEnc(readEncoder() - avoidFwdRef) >= (long)(RECOVER_MIN_FWD_CM * TICKS_PER_CM)) {
-    backupServo = lastServoDeg;
-    setServoAngle(backupServo);
-    setMotorSpeed(-AVOID_BACK_PWM);
-    avoidBackupRef = readEncoder();
-    avoidPhase = 6;
-    Serial.print(F("[AVOID] front ")); Serial.print(tofFront); Serial.println(F("mm -> backing up"));
+
+void recoverStep() {
+  if (!entered) {
+    entered = true;
+    setMotorSpeed(0);
+    setServoAngle(2.0 * SERVO_TRUE_STRAIGHT - lastServoCmd);
+    setMotorSpeed(-RECOVER_PWM);
+    recoverBaseTicks = readEncoder();
+    Serial.print(F("# RECOVER front=")); Serial.println(lidarF);
   }
-  switch (avoidPhase) {
-    case 1: {   // SWERVE to the computed offset; wall ToF is only a safety floor
-      setServoAngle(avoidOutServo);
-      setMotorSpeed(AVOID_PWM);
-      uint16_t sMm  = green ? tofLeft      : tofRight;
-      bool     sVal = green ? tofLeftValid : tofRightValid;
-      long moved = absEnc(readEncoder() - avoidRefTicks);
-      bool reached = sVal && (sMm <= avoidTargetMm);
-      bool safety  = sVal && (sMm <= SIDE_SAFE_MM);
-      bool capped  = moved >= (long)(AVOID_OUT_CAP_CM * TICKS_PER_CM);
-      bool cleared = !pillarEngaged();          // pillar already left the frame
-      if (reached || safety || capped || cleared) {
-        avoidOutTicks  = moved;                 // remember for a symmetric return
-        turnStartTicks = readEncoder();
-        turnCapTicks   = (long)(REALIGN_SAFETY_CM * TICKS_PER_CM);
-        avoidPhase = 2;
-        Serial.print(F("[AVOID] at offset, out=")); Serial.print(moved / TICKS_PER_CM); Serial.println(F("cm"));
-      }
+
+  bool clear     = !lidarStale && (lidarF >= WALL_CLEAR_MM);
+  bool backedFar = absEnc(readEncoder() - recoverBaseTicks)
+                   >= (long)(RECOVER_MAX_CM * TICKS_PER_CM);
+  if (!clear && !backedFar) return;
+
+  setMotorSpeed(0);
+  if (clear) { recoverTries = 0;  Serial.println(F("# recover clear")); }
+  else       { recoverTries++;    Serial.print(F("# recover capped, try "));
+               Serial.println(recoverTries); }
+
+  currentState = recoverReturnState;
+  entered      = recoverReturnEntered;
+  resetHeadingPid();
+
+  switch (recoverReturnState) {
+    case STATE_DRIVE_TO_CORNER:
+    case STATE_FINAL_STRAIGHT:
+      setMotorSpeed(DRIVE_PWM);
       break;
-    }
-    case 2:     // STRAIGHTEN onto lane heading (holding the offset)
-      if (turnArcStep(laneHeading)) { avoidGoneStart = 0; avoidPhase = 3; }
-      break;
-    case 3: {   // HOLD until the colour clears the frame (debounced)
-      updateHeadingPid(laneHeading);
-      bool gone = !pillarEngaged();
-      if (gone) { if (avoidGoneStart == 0) avoidGoneStart = millis(); }
-      else        avoidGoneStart = 0;
-      if (avoidGoneStart != 0 && millis() - avoidGoneStart >= AVOID_RELEASE_MS) {
-        setServoAngle(avoidBackServo);
-        setMotorSpeed(AVOID_PWM);
-        avoidRefTicks = readEncoder();
-        avoidPhase = 4;
-        Serial.println(F("[AVOID] passed -> returning"));
-      }
-      break;
-    }
-    case 4:     // RETURN the SAME remembered displacement
-      setServoAngle(avoidBackServo);
-      setMotorSpeed(AVOID_PWM);
-      if (absEnc(readEncoder() - avoidRefTicks) >= avoidOutTicks) {
-        turnStartTicks = readEncoder();
-        turnCapTicks   = (long)(REALIGN_SAFETY_CM * TICKS_PER_CM);
-        avoidPhase = 5;
-      }
-      break;
-    case 5:     // REALIGN to centre and resume normal driving
-      if (turnArcStep(laneHeading)) {
-        avoidSteerDeg = AVOID_STEER_DEG;        // restore base swerve after crossing
-        avoidPhase = 0;
-        resetHeadingPid();
-        setMotorSpeed(BASE_SPEED);
-        Serial.println(F("[AVOID] done, back to centre"));
-        goState(STATE_DRIVE_TO_CORNER);
-      }
-      break;
-    case 6:     // BACKUP: reverse on last angle, then boost swerve and retry
-      setServoAngle(backupServo);
-      setMotorSpeed(-AVOID_BACK_PWM);
-      if (absEnc(readEncoder() - avoidBackupRef) >= (long)(AVOID_BACKUP_CM * TICKS_PER_CM)) {
-        avoidSteerDeg += AVOID_STEER_BOOST;
-        if (avoidSteerDeg > AVOID_STEER_MAX) avoidSteerDeg = AVOID_STEER_MAX;
-        avoidComputeServos();
-        avoidRefTicks = readEncoder();
-        avoidFwdRef   = readEncoder();
-        setServoAngle(avoidOutServo);
-        setMotorSpeed(AVOID_PWM);
-        avoidPhase = 1;
-        Serial.print(F("[AVOID] boosted swerve -> ")); Serial.println(avoidSteerDeg);
-      }
-      break;
+    default:
+      break;     // TURNING sets its own PWM each step
   }
 }
+
+// ============================================================
+// STATE: WAIT START  (armed - waits for START from the Pi page)
+// ============================================================
+void waitStartStep() {
+  if (!entered) {
+    entered = true;
+    startRequested = false;          // a START sent before arming is ignored
+    setMotorSpeed(0);
+    setServoAngle(SERVO_TRUE_STRAIGHT);
+    Serial.println(F("# WAIT_START armed - press Start on the Pi page"));
+  }
+  digitalWrite(LED1_PIN, ((millis() / 250) & 1) ? HIGH : LOW);
+
+  if (!startRequested) return;
+  startRequested = false;
+
+  if (lidarStale) {
+    Serial.println(F("# START refused: lidar stale"));
+    return;
+  }
+
+  digitalWrite(LED1_PIN, HIGH);
+  digitalWrite(LED2_PIN, LOW);
+  digitalWrite(LED3_PIN, LOW);
+  lockedColor      = COLOR_NONE;
+  lastFirstColor   = COLOR_NONE;
+  clockwiseMode    = true;
+  cornerCount      = 0;
+  colorMuted       = false;
+  recoverTries     = 0;
+  firstSegmentCm   = 0.0;
+  fullStartStraightCm = 0.0;
+  haveFullStraight = false;
+  finalDistanceCm  = FINAL_STRAIGHT_CM;
+  laneHeading      = gHeading;
+  targetHeading    = laneHeading;
+  levelEnabled     = false;          // DRIVE turns it on
+  levelTotalDeg    = 0.0;
+  clearTracks();
+  resetLaneAlong();
+  zeroEncoder();
+  Serial.println(F("# GO"));
+  goState(STATE_DRIVE_TO_CORNER);
+}
+
 // ============================================================
 // STATE: DRIVE TO CORNER
+// Same corner logic as the open round; steering is now the blended
+// heading + wall-centre + pillar law.
 // ============================================================
 void driveStep() {
   if (!entered) {
     entered = true;
-    Serial.println(F("[FSM] DRIVE_TO_CORNER"));
-    dcWantFirst = lockedColor;
-    dcFirstTurn = (lockedColor == COLOR_NONE);
+    dcWantColor   = lockedColor;
+    dcColorArmed  = false;
+    sideOpenCount = 0;
     resetColorDetector();
     resetHeadingPid();
     dcBaseTicks = readEncoder();
-    setMotorSpeed(BASE_SPEED);
-    dcColorArmed   = false;
-    gapMeasured    = false;
-    sideInvalidStart = 0;
+    setMotorSpeed(DRIVE_PWM);
+    Serial.println(F("# DRIVE"));
+
     dcLockoutTicks = (cornerCount > 0) ? (long)(POST_CORNER_LOCKOUT_CM * TICKS_PER_CM) : 0;
     dcSafetyTicks  = (long)(SEARCH_SAFETY_CM * TICKS_PER_CM);
   }
+
   long straightTicks = absEnc(readEncoder() - dcBaseTicks);
   if (straightTicks >= dcSafetyTicks) {
-    Serial.println(F("[FSM] WARN: no line within safety distance, retrying"));
+    Serial.println(F("# WARN no turn trigger within safety distance, retrying"));
     entered = false;
     return;
   }
-  updateHeadingPid(targetHeading);
-  if (straightTicks <= dcLockoutTicks) return;
-  // ---- turn triggers (floor colour gate + wall) computed first ----
-  bool expectedCW  = dcFirstTurn ? (lastFirstColor == COLOR_ORANGE) : clockwiseMode;
-  bool sidePresent = expectedCW ? tofRok : tofLok;
-  bool sideValid   = expectedCW ? tofRightValid : tofLeftValid;
-  bool frontClose  = tofFrontValid && (tofFront <= FRONT_TURN_MM);
-  // ---- OFFSET-BASED PILLAR AVOIDANCE (don't pre-empt a real corner) ----
-  if (pillarEngaged() && !(frontClose && dcColorArmed)) {
-    startAvoid();
-    goState(STATE_AVOID);
-    return;
-  }
-  if (!dcColorArmed) {
-    BlockColor c = detectColor(dcWantFirst);
+
+  // Vision is live from the first tick after the arc, lockout included -
+  // a pillar right after the corner is handled immediately.
+  plannerEnabled = true;
+  updateDriveSteer(targetHeading, true);
+
+  if (absEnc(readEncoder()) <= dcLockoutTicks) { levelEnabled = false; return; }
+  levelEnabled = true;
+
+  bool directionLocked = (lockedColor != COLOR_NONE);
+
+  // ---- 1. colour gate: first corner, or lidar-dead fallback ----
+  if (!dcColorArmed && (!directionLocked || lidarDead)) {
+    BlockColor c = detectColor(dcWantColor);
     if (c != COLOR_NONE) {
       dcColorArmed = true;
-      cornerFirstTicks = readEncoder();
-      if (dcFirstTurn) lastFirstColor = c;
-      sideInvalidStart = 0;
+      if (!directionLocked) lastFirstColor = c;
+      sideOpenCount = 0;
       resetColorDetector();
-      Serial.print(F("  colour gate armed: "));
-      Serial.println(c == COLOR_ORANGE ? F("ORANGE") : F("BLUE"));
+      Serial.print(F("# gate ")); Serial.print(c == COLOR_ORANGE ? F("ORANGE") : F("BLUE"));
+      Serial.print(F(" side=")); Serial.println(turnSideMm());
     }
-    return;
   }
-  if (!gapMeasured && detectColor(otherColor(lastFirstColor)) != COLOR_NONE) {
-    long tr = absEnc(readEncoder() - cornerFirstTicks);
-    lastGapCm = (float)tr / TICKS_PER_CM;
-    gapMeasured = true;
-    Serial.print(F("  partner line pre-turn, gap="));
-    Serial.print(lastGapCm); Serial.println(F(" cm"));
+  if (!directionLocked && !dcColorArmed) return;
+
+  // ---- 2. turn confirm: turn side > SIDE_OPEN_MM on consecutive NEW frames ----
+  uint16_t sideNow = turnSideMm();
+  bool aligned = fabs(wrapDeg(gHeading - laneHeading)) < TURN_TRIGGER_MAX_YAW;
+  if (lidarStale || !aligned) {
+    sideOpenCount = 0;
+  } else if (lidarNewFrame) {
+    if (sideNow > SIDE_OPEN_MM) { if (sideOpenCount < 250) sideOpenCount++; }
+    else                        sideOpenCount = 0;
   }
-  bool sideConfirmed = false;
-  if (sidePresent && !sideValid) {
-    if (sideInvalidStart == 0) sideInvalidStart = millis();
-    if (millis() - sideInvalidStart >= SIDE_INVALID_MS) sideConfirmed = true;
-  } else {
-    sideInvalidStart = 0;
-  }
-  bool noRange = (!tofFok) && (!tofLok) && (!tofRok);
-  if (frontClose || sideConfirmed || noRange) {
-    if (frontClose)         Serial.println(F("  turn: FRONT close"));
-    else if (sideConfirmed) Serial.println(expectedCW ? F("  turn: RIGHT wall gone") : F("  turn: LEFT wall gone"));
-    else                    Serial.println(F("  turn: colour-only (no range sensors)"));
-    if (lockedColor == COLOR_NONE) {
+
+  bool sideOpen = (sideOpenCount >= SIDE_OPEN_FRAMES);
+
+  if (sideOpen || (lidarDead && dcColorArmed)) {
+    if (sideOpen) { Serial.print(F("# turn: side open ")); Serial.println(sideNow); }
+    else          Serial.println(F("# turn: colour only (lidar dead)"));
+
+    if (!directionLocked) {
       lockedColor   = lastFirstColor;
       clockwiseMode = (lockedColor == COLOR_ORANGE);
-      Serial.println(clockwiseMode
-        ? F("[FSM] LOCKED ORANGE -> CLOCKWISE (right turns)")
-        : F("[FSM] LOCKED BLUE -> COUNTERCLOCKWISE (left turns)"));
+      Serial.println(clockwiseMode ? F("# LOCKED CW (orange)") : F("# LOCKED CCW (blue)"));
     }
-    float segCm = absEnc(cornerFirstTicks) / TICKS_PER_CM;
+
+    float segCm = absEnc(readEncoder()) / TICKS_PER_CM;
     if (cornerCount == 0) {
       firstSegmentCm = segCm;
-      Serial.print(F("[DIST] A start->turn1 = ")); Serial.print(firstSegmentCm); Serial.println(F(" cm"));
+      Serial.print(F("# A=")); Serial.println(firstSegmentCm);
     } else if (cornerCount == 4) {
       fullStartStraightCm = segCm; haveFullStraight = true;
     } else if (cornerCount == 8 && haveFullStraight) {
@@ -682,187 +1163,150 @@ void driveStep() {
     if (haveFullStraight) {
       finalDistanceCm = fullStartStraightCm - firstSegmentCm;
       if (finalDistanceCm < 0) finalDistanceCm = 0;
+      Serial.print(F("# L=")); Serial.print(fullStartStraightCm);
+      Serial.print(F(" final=")); Serial.println(finalDistanceCm);
     }
+
     goState(STATE_TURNING);
   }
 }
+
 // ============================================================
-// STATE: TURNING
+// STATE: TURNING  (wider eased 90 deg arc, vision off)
 // ============================================================
 void turningStep() {
   if (!entered) {
     entered = true;
+    levelEnabled = false;
+    plannerEnabled = false;
+    clearTracks();
+    Serial.print(F("# level ")); Serial.println(levelTotalDeg);
+    levelTotalDeg = 0.0;
     cornerCount++;
-    Serial.print(F("[FSM] TURNING - corner "));
-    Serial.print(cornerCount); Serial.print(F(" / ")); Serial.println(TARGET_CORNERS);
-    turnAmount    = clockwiseMode ? 90.0 : -90.0;
-    turnTarget    = wrapDeg(laneHeading - turnAmount);
-    turnPartner   = otherColor(lastFirstColor);
-    resetColorDetector();
-    turnGotSecond = gapMeasured;
+    Serial.print(F("# TURN ")); Serial.print(cornerCount);
+    Serial.print('/'); Serial.println(TARGET_CORNERS);
+    turnAmount     = clockwiseMode ? 90.0 : -90.0;
+    turnTarget     = wrapDeg(laneHeading - turnAmount);
     turnStartTicks = readEncoder();
-    turnCapTicks   = (long)(120.0 * TICKS_PER_CM);
+    turnCapTicks   = (long)(TURN_CAP_CM * TICKS_PER_CM);
   }
-  if (!turnGotSecond && detectColor(turnPartner) != COLOR_NONE) {
-    long tr = absEnc(readEncoder() - cornerFirstTicks);
-    lastGapCm = (float)tr / TICKS_PER_CM;
-    turnGotSecond = true; gapMeasured = true;
-  }
+
   if (turnArcStep(turnTarget)) {
-    if (!turnGotSecond) {
-      lastGapCm = gapRefCm;
-      Serial.println(F("  WARN: partner line missed, skipping correction"));
-    }
     laneHeading = wrapDeg(laneHeading - turnAmount);
-    if (cornerCount == 1 && !gapRefSet && gapMeasured) {
-      gapRefCm  = lastGapCm; gapRefSet = true;
-      Serial.print(F("[GAP] reference learned from turn 1 = "));
-      Serial.print(gapRefCm); Serial.println(F(" cm"));
-    }
     zeroEncoder();
-    goState(STATE_LANE_CORRECT);
+    resetLaneAlong();
+    clearTracks();                 // anything seen mid-turn was in the old lane frame
+    Serial.print(F("# lane heading ")); Serial.println(laneHeading);
+    finishCorner();
   }
 }
+
 // ============================================================
-// STATE: LANE CORRECT
-// ============================================================
-void laneCorrectStep() {
-  if (!entered) {
-    entered = true;
-    float delta = lastGapCm - gapRefCm;
-    float mag = fabs(delta);
-    if (mag < GAP_DEADBAND_CM) {
-      finishLaneCorrect();
-      return;
-    }
-    float steerSigned = CORRECTION_SIGN * delta;
-    if (clockwiseMode) steerSigned = -steerSigned;
-    float offset = K_LAT_DEG_PER_CM * mag;
-    if (offset > MAX_LAT_OFFSET_DEG) offset = MAX_LAT_OFFSET_DEG;
-    float servo = (steerSigned > 0) ? (SERVO_TRUE_STRAIGHT - offset)
-                                    : (SERVO_TRUE_STRAIGHT + offset);
-    setServoAngle(servo);
-    setMotorSpeed(CORRECTION_PWM);
-    lcBaseTicks   = readEncoder();
-    lcTargetTicks = (long)(CORRECTION_DISTANCE_CM * TICKS_PER_CM);
-    lcPhase = 2;
-    return;
-  }
-  if (lcPhase == 2) {
-    if (absEnc(readEncoder() - lcBaseTicks) >= lcTargetTicks) {
-      turnStartTicks = readEncoder();
-      turnCapTicks   = (long)(REALIGN_SAFETY_CM * TICKS_PER_CM);
-      lcPhase = 4;
-    }
-  } else {
-    if (turnArcStep(laneHeading)) finishLaneCorrect();
-  }
-}
-// ============================================================
-// STATE: FINAL STRAIGHT
+// STATE: FINAL STRAIGHT  (drive L - A from the end of turn 12)
+// Pillars can sit in the start section, so the full steering law runs.
 // ============================================================
 void finalStraightStep() {
   if (!entered) {
     entered = true;
-    Serial.print(F("[FSM] FINAL_STRAIGHT to L-A = "));
-    Serial.print(finalDistanceCm); Serial.println(F("cm from turn 12"));
+    Serial.print(F("# FINAL_STRAIGHT ")); Serial.println(finalDistanceCm);
     resetHeadingPid();
-    setMotorSpeed(BASE_SPEED);
+    setMotorSpeed(DRIVE_PWM);
     fsTargetTicks = (long)(finalDistanceCm * TICKS_PER_CM);
   }
-  updateHeadingPid(laneHeading);
+  levelEnabled = absEnc(readEncoder()) > (long)(POST_CORNER_LOCKOUT_CM * TICKS_PER_CM);
+  plannerEnabled = true;
+  updateDriveSteer(laneHeading, true);
   if (absEnc(readEncoder()) >= fsTargetTicks) {
     setMotorSpeed(0);
     setServoAngle(SERVO_TRUE_STRAIGHT);
     goState(STATE_FINISHED);
   }
 }
-// ============================================================
-// TELEMETRY  ->  Pi web page ("#" lines)
-// ============================================================
-const char *stateName(RobotState s) {
-  switch (s) {
-    case STATE_INIT:            return "INIT";
-    case STATE_WAIT_START:      return "WAIT";
-    case STATE_DRIVE_TO_CORNER: return "DRIVE";
-    case STATE_TURNING:         return "TURN";
-    case STATE_LANE_CORRECT:    return "LANE";
-    case STATE_AVOID:           return "AVOID";
-    case STATE_FINAL_STRAIGHT:  return "FINAL";
-    case STATE_FINISHED:        return "DONE";
-  }
-  return "?";
-}
-unsigned long lastTelem = 0;
-void telemetry() {
-  if (millis() - lastTelem < 100) return;
-  lastTelem = millis();
-  BlockColor fc = rawFloorColor();
-  PiSerial.print(F("# st=")); PiSerial.print(stateName(currentState));
-  PiSerial.print(F(" av="));  PiSerial.print(avoidPhase);
-  PiSerial.print(F(" cw="));  PiSerial.print(clockwiseMode ? 'R' : 'L');
-  PiSerial.print(F(" sv="));  PiSerial.print((int)lastServoDeg);
-  PiSerial.print(F(" hd="));  PiSerial.print(gHeading, 1);
-  PiSerial.print(F(" F="));   PiSerial.print(tofFrontValid ? (int)tofFront : -1);
-  PiSerial.print(F(" L="));   PiSerial.print(tofLeftValid  ? (int)tofLeft  : -1);
-  PiSerial.print(F(" R="));   PiSerial.print(tofRightValid ? (int)tofRight : -1);
-  PiSerial.print(F(" fl="));  PiSerial.print(fc == COLOR_ORANGE ? 'O' : fc == COLOR_BLUE ? 'B' : '-');
-  PiSerial.print(F(" vis=")); PiSerial.print(visionFresh() ? vis.colour : 'x');
-  PiSerial.print(F(" dx="));  PiSerial.print(vis.dx);
-  PiSerial.print(F(" a="));   PiSerial.print(vis.area);
-  PiSerial.print(F(" cn="));  PiSerial.print(cornerCount);
-  PiSerial.println();
-}
-// ============================================================
-// START BUTTON  (PA5 active-low, blocking wait - car not moving yet)
-// ============================================================
-void waitForStart() {
-  Serial.println(F("[FSM] waiting for START button (PA5 -> GND)"));
-  while (digitalRead(START_BTN_PIN) == HIGH) { delay(5); }   // wait for press (LOW)
-  delay(30);
-  while (digitalRead(START_BTN_PIN) == LOW)  { delay(5); }   // wait for release
-  Serial.println(F("[FSM] START"));
-}
+
 // ============================================================
 // MAIN
 // ============================================================
 void setup() {
   Serial.begin(115200);
   initHardware();
-  delay(500);
 }
+
 void loop() {
   serviceSensors();
+
+  // ---- startup gate: nothing runs until the Pi's first frame ----
+  if (!fsmStarted) {
+    if (lidarFrames == 0) {
+      digitalWrite(LED1_PIN, ((millis() / 500) & 1) ? HIGH : LOW);
+      return;
+    }
+    fsmStarted = true;
+    Serial.println(F("# first Pi frame received - FSM starting"));
+  }
+
+  // START only means something while armed or finished. Anything else -
+  // a press mid-run, or the repeat copies of the press that started this
+  // run - is discarded so it can't auto-restart the car when it finishes.
+  if (currentState != STATE_WAIT_START && currentState != STATE_FINISHED)
+    startRequested = false;
+
+  // STOP from the page: works in every state.
+  if (stopRequested) {
+    stopRequested = false;
+    if (currentState != STATE_FINISHED) {
+      Serial.println(F("# STOP from Pi"));
+      goState(STATE_FINISHED);
+    }
+  }
+
+  if (colorMuted && currentState != STATE_RECOVER && readEncoder() >= colorMuteFrom) {
+    colorMuted = false;
+    Serial.println(F("# colour re-enabled"));
+  }
+
+  // Wall panic overlay. Skipped while the camera sees a pillar: the short
+  // front reading is the pillar, and the pillar PD is steering round it.
+  if (!lidarStale &&
+      !pillarSeen() &&
+      currentState != STATE_RECOVER &&
+      currentState != STATE_WAIT_START &&
+      currentState != STATE_FINISHED &&
+      recoverTries < RECOVER_MAX_TRIES &&
+      lidarF <= WALL_PANIC_MM) {
+    enterRecovery();
+  }
+
+  if (currentState != STATE_WAIT_START && currentState != STATE_FINISHED) {
+    digitalWrite(LED1_PIN, lidarStale ? (((millis() / 100) & 1) ? HIGH : LOW) : HIGH);
+  }
+
   switch (currentState) {
-    case STATE_INIT:
-      Serial.println(F("[FSM] INIT"));
-      lockedColor   = COLOR_NONE;
-      cornerCount   = 0;
-      laneHeading   = readHeading();
-      targetHeading = laneHeading;
-      zeroEncoder();
-      goState(STATE_WAIT_START);
-      break;
-    case STATE_WAIT_START:
-      waitForStart();
-      laneHeading   = readHeading();     // re-zero reference at the gun
-      targetHeading = laneHeading;
-      zeroEncoder();
-      goState(STATE_DRIVE_TO_CORNER);
-      break;
+    case STATE_WAIT_START:      waitStartStep();     break;
     case STATE_DRIVE_TO_CORNER: driveStep();         break;
     case STATE_TURNING:         turningStep();       break;
-    case STATE_LANE_CORRECT:    laneCorrectStep();   break;
-    case STATE_AVOID:           avoidStep();         break;
     case STATE_FINAL_STRAIGHT:  finalStraightStep(); break;
+    case STATE_RECOVER:         recoverStep();       break;
+
     case STATE_FINISHED:
       if (!entered) {
         entered = true;
-        Serial.println(F("[FSM] FINISHED"));
+        Serial.println(F("# FINISHED"));
+        levelEnabled = false;
+        plannerEnabled = false;
+        startRequested = false;      // only a NEW press restarts
         setMotorSpeed(0);
         setServoAngle(SERVO_TRUE_STRAIGHT);
+        digitalWrite(LED1_PIN, HIGH);
+        digitalWrite(LED2_PIN, HIGH);
+        digitalWrite(LED3_PIN, HIGH);
+      }
+      // START again from the page re-arms and runs a fresh 3 laps
+      // (put the car back in the start section first).
+      if (startRequested) {
+        goState(STATE_WAIT_START);   // WAIT_START clears the flag on entry,
+        waitStartStep();             // so arm first ...
+        startRequested = true;       // ... then honour this press
       }
       break;
   }
-  telemetry();
 }
