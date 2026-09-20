@@ -1,40 +1,93 @@
 // ============================================================================
 // ObstacleLap.cpp — WRO Future Engineers obstacle round, LAP ONLY.
-// (No parallel parking, no magenta, no start button, no rear ToF.)
+// (No parallel parking, no magenta, no start button, no rear ToF,
+//  no colour sensor.)
 //
 // This is OpenRound.cpp with ONE state added. Everything that was already
 // calibrated on this car — servo trim and limits, TICKS_PER_CM, the heading
-// PID, the eased 90 deg arc, the colour thresholds, the wall recovery — is
-// unchanged and still runs the car. Do not port this to ObstacleExecutor.cpp:
-// that file's pin map (PB9/PB8 motor, TIM3 encoder, IMU on PB5/4/3) is from an
-// earlier build and does not match this hardware.
+// PID, the eased 90 deg arc, the wall recovery — is unchanged and still runs
+// the car. Do not port this to ObstacleExecutor.cpp: that file's pin map
+// (PB9/PB8 motor, TIM3 encoder, IMU on PB5/4/3) is from an earlier build and
+// does not match this hardware.
 //
 // SPLIT OF WORK
 //   Pi      camera + lidar, pillar tracking, and the avoidance solve. It sends
 //           a solved manoeuvre: "hold this absolute heading for this many mm".
 //   STM32   this file: the state machine, the heading PID at IMU rate, the
-//           turn arc, odometry, the watchdog. Every fast loop is here because
-//           a 50 Hz link cannot close a heading loop.
+//           turn arc, odometry, the lidar/link staleness logic. Every fast
+//           loop is here because a 50 Hz link cannot close a heading loop.
+//           NOTE: there is no link-loss motor cut. If the Pi goes quiet the
+//           car carries on under its own logic; to halt it the Pi sends
+//           CMD = STOP (the dashboard's "Stop car").
 //
 // STATES
 //   BOOT     nothing happens until the Pi says its lidar AND camera are up.
 //   HEADING  hold the lane heading. Watch for a corner, a pillar, the finish.
 //   AVOID    hold the heading the Pi solved, for the distance it asked for.
 //   TURN90   eased 90 deg arc, terminated on IMU heading.
-//   FINISH   stopped.
+//   FINISH   stopped. A RERUN from the Pi sends it back to BOOT.
 //   RECOVER  overlay: something is too close in front; back off and resume.
+//   STOPPED  halted by CMD = STOP from any moving state. Motor off, steering
+//            centred. A RERUN sends it back to BOOT, exactly as from FINISH.
+//
+// DRIVING DIRECTION  (lidar sides only — the colour sensor is not used)
+//   Until the direction is locked, BOTH lidar sides are watched. The outer
+//   wall never ends, so the first side to read past SIDE_OPEN_MM (1500) for
+//   SIDE_OPEN_REVS revolutions is the inner side:
+//       right opens first -> CLOCKWISE      left opens first -> COUNTER-CW
+//   That same trigger is the first corner's turn. After the lock only the
+//   locked side is watched, exactly as before. Two guards on the lock: a side
+//   must have shown a wall at least once this run, and both sides opening
+//   together locks nothing. LOCK_NEEDS_REAL_RETURN covers the one case they
+//   do not (an outer-side dropout).
 //
 // LINK  (docs/OBSTACLE_LAP.md)
-//   Pi  -> us   PERCEPT  16 bytes, sync AA 55, 50 Hz
-//   us  -> Pi   TELEM    22 bytes, sync 55 AA, 50 Hz
-//   The '#' log lines below share the port. 0xAA is not ASCII, so a log line
-//   can never contain the TELEM sync word and the Pi separates the two cleanly.
+//   Pi  -> us   PERCEPT  17 bytes, sync AA 55, 50 Hz
+//   us  -> Pi   TELEM    22 bytes, sync 55 AA, 50 Hz   (layout unchanged)
+//   us  -> Pi   STATUS   61 bytes, sync 55 A5, 10 Hz   FSM internals for the
+//                                                      dashboard; see sendStatus()
+//   The '#' log lines below share the port. 0xAA and 0xA5 are not ASCII, so a
+//   log line can never contain the TELEM or STATUS sync word and the Pi
+//   separates the three cleanly.
+//
+//   PERCEPT (little-endian)
+//     0-1    AA 55         sync
+//     2      seq
+//     3      flags         LIDAR_OK 01, CAM_OK 02, AVOID 0C, GREEN 10, HELLO 20
+//     4-5    left   mm     u16
+//     6-7    front  mm     u16
+//     8-9    right  mm     u16
+//     10     lidar revolution counter
+//     11-12  avoid heading, deg x10   i16
+//     13-14  avoid leg, mm            u16
+//     15     CMD           0 = none, 1 = RERUN, 2 = STOP, 3 = REBOOT
+//     16     XOR of bytes 2..15
+//
+//   RERUN acts only on a 0 -> 1 change seen while the car is FINISHED (or
+//   STOPPED). A 1 already being sent when the run ends does nothing, and
+//   holding 1 gives one rerun, never run after run. The Pi can drop CMD back
+//   to 0 as soon as TELEM shows state BOOT.
+//
+//   STOP and REBOOT act only once CMD_CONFIRM_FRAMES consecutive good frames
+//   carry the same value, so one corrupt or mis-synced frame can never halt
+//   or reset the car. STOP: any state but FINISH/STOPPED -> STOPPED; the Pi
+//   holds 2 until TELEM shows STOPPED. REBOOT: motor off, then
+//   NVIC_SystemReset() — USB drops and re-enumerates, setup() re-zeroes the
+//   yaw, so the car must be still. A command frame need not carry ranges:
+//   with LIDAR_OK clear it refreshes the link, never the lidar clock.
+//
+// LEDS
+//   LED1  slow blink = waiting on Pi, faster = countdown, solid = running,
+//         fast = lidar stale
+//   LED2  direction locked CLOCKWISE
+//   LED3  direction locked COUNTER-CLOCKWISE
+//   all three solid = FINISHED
+//   LED1 off, LED2/LED3 alternating = STOPPED
 //
 // BENCH-VERIFIED (unchanged from the open round)
 //   motor    PA2 forward, PA3 reverse
 //   encoder  TIM5 PA0/PA1, negated so forward counts up
 //   IMU      BNO08x SPI1 ~100 Hz, clockwise = negative yaw
-//   colour   TCS34725 CH4, white pR 47 / orange pR 69 / blue pB 27
 //   servo    500-2500 us, straight 76.5, left stop 20, right stop 140
 //            turning radius at full lock: left 27 cm, right 25 cm
 // ============================================================================
@@ -42,11 +95,7 @@
 #include <Arduino.h>
 #include <Servo.h>
 #include <SPI.h>
-#include <Wire.h>
 #include <SparkFun_BNO08x_Arduino_Library.h>
-#include <Adafruit_TCS34725.h>
-
-enum BlockColor { COLOR_NONE, COLOR_ORANGE, COLOR_BLUE };
 
 // Must match STATE_NAMES / ST_* in control/percept_link.py.
 enum RobotState {
@@ -55,8 +104,12 @@ enum RobotState {
   STATE_AVOID,
   STATE_TURN90,
   STATE_FINISH,
-  STATE_RECOVER
+  STATE_RECOVER,
+  STATE_STOPPED
 };
+
+// Why the car is standing still at the end. Reported in STATUS only.
+enum FinishReason { FINISH_NONE = 0, FINISH_BY_WALL, FINISH_BY_ODO, FINISH_BY_STOP_CMD };
 
 // ============================================================================
 // HARDWARE PINS & OBJECTS
@@ -70,15 +123,12 @@ const int IMU_INT_PIN = PB0;
 const int IMU_RST_PIN = PB1;
 
 const int LED1_PIN = PB12;   // slow blink = waiting on Pi; solid = running; fast = lidar stale
-const int LED2_PIN = PB13;   // ORANGE under the floor sensor
-const int LED3_PIN = PB14;   // BLUE under the floor sensor
+const int LED2_PIN = PB13;   // direction locked CLOCKWISE
+const int LED3_PIN = PB14;   // direction locked COUNTER-CLOCKWISE
 const int BTN_START_PIN = PB15;   // not used this round
 
-#define I2C_SCL     PB6
-#define I2C_SDA     PB7
-#define TCA_RST_PIN PB8
-#define TCA_ADDR    0x70
-#define TCS_CH      4
+// The colour sensor (TCS34725 behind the TCA9548A on PB6/PB7) is not read at
+// all, so it can stay mounted or come off. Nothing in this file touches I2C.
 
 // ---- calibration ----
 const float TICKS_PER_CM        = 14.853;
@@ -100,9 +150,7 @@ const unsigned long START_DELAY_MS = 5000;
 SPIClass SPI_IMU(PA7, PA6, PA5);  // MOSI, MISO, SCLK
 Servo steeringServo;
 BNO08x myIMU;
-Adafruit_TCS34725 tcs = Adafruit_TCS34725(TCS34725_INTEGRATIONTIME_2_4MS, TCS34725_GAIN_16X);
 
-bool  tcsOk = false;
 float initialYawOffset = 0.0;
 
 // ============================================================================
@@ -110,7 +158,7 @@ float initialYawOffset = 0.0;
 // ============================================================================
 const uint8_t PERCEPT_SYNC0 = 0xAA, PERCEPT_SYNC1 = 0x55;
 const uint8_t TELEM_SYNC0   = 0x55, TELEM_SYNC1   = 0xAA;
-const uint8_t PERCEPT_LEN = 16, TELEM_LEN = 22;
+const uint8_t PERCEPT_LEN = 17, TELEM_LEN = 22;
 
 const uint8_t P_LIDAR_OK = 0x01;
 const uint8_t P_CAM_OK   = 0x02;
@@ -120,13 +168,42 @@ const uint8_t P_HELLO    = 0x20;
 
 const uint8_t AVOID_NONE = 0, AVOID_TRACK = 1, AVOID_COMMIT = 2;
 
+// PERCEPT byte 15. Only these mean anything; every other value reads as NONE.
+const uint8_t CMD_NONE = 0, CMD_RERUN = 1, CMD_STOP = 2, CMD_REBOOT = 3;
+const uint8_t CMD_CONFIRM_FRAMES = 3;   // STOP / REBOOT need this many in a row
+
 const uint8_t S_RUNNING = 0x01, S_LIDAR_STALE = 0x02, S_LIDAR_DEAD = 0x04;
 const uint8_t S_DIR_LOCKED = 0x08, S_CLOCKWISE = 0x10, S_IMU_OK = 0x20;
-const uint8_t S_COLOUR_OK = 0x40, S_RECOVERING = 0x80;
+const uint8_t S_COLOUR_OK = 0x40;   // never set any more: no colour sensor
+const uint8_t S_RECOVERING = 0x80;
+
+// ---- STATUS (us -> Pi): FSM internals TELEM does not carry. 10 Hz. ----
+// Reporting only: nothing in here feeds a decision. Layout in sendStatus();
+// must match parse_status() in control/percept_link.py and tests/test_wire.py.
+const uint8_t  STATUS_SYNC0 = 0x55, STATUS_SYNC1 = 0xA5;
+const uint8_t  STATUS_LEN = 61;
+const uint8_t  STATUS_VERSION = 1;
+const uint32_t STATUS_PERIOD_MS = 100;
+// flags
+const uint8_t SF_FSM_STARTED = 0x01;    // a PERCEPT frame has arrived since power-up
+const uint8_t SF_BOOT_READY  = 0x02;    // BOOT: Pi ready, 5 s countdown running
+const uint8_t SF_LIDAR_HOLD  = 0x04;    // HEADING parked the car: lidar dead
+const uint8_t SF_LINK_STALE  = 0x08;    // no PERCEPT for LINK_STALE_MS
+const uint8_t SF_BLIND       = 0x10;    // this run's GO happened with the camera down
+const uint8_t SF_RERUN_ARMED = 0x20;    // FINISH/STOPPED: a RERUN would be taken now
+const uint8_t SF_WALL_SEEN_L = 0x40;
+const uint8_t SF_WALL_SEEN_R = 0x80;
+// flags2
+const uint8_t SF2_REAL_OPEN_L   = 0x01;
+const uint8_t SF2_REAL_OPEN_R   = 0x02;
+const uint8_t SF2_LOCK_NEEDS_REAL = 0x04;   // the LOCK_NEEDS_REAL_RETURN constant
+// pflags: the last PERCEPT, as this side understood it
+const uint8_t PF_HELLO = 0x01, PF_LIDAR_OK = 0x02, PF_CAM_OK = 0x04, PF_GREEN = 0x08;
+const uint8_t PF_ACTION_SHIFT = 4;      // bits 4-5
 
 // Two thresholds on purpose. STALE (short) just stops us acting on old
-// distances. DEAD (long) is what disables the lidar corner trigger — a single
-// dropped batch of frames must not be read as "lidar gone".
+// distances. DEAD (long) means the lidar is gone: HEADING parks the car until
+// it is back. A single dropped batch of frames must not be read as "gone".
 const unsigned long LIDAR_STALE_MS     = 200;
 const unsigned long LIDAR_DEAD_MS      = 1000;
 const unsigned long LINK_STALE_MS      = 250;    // Pi quiet: stop trusting TRACK
@@ -156,6 +233,8 @@ uint8_t pAction = AVOID_NONE;
 bool    pGreen = false, pLidarOk = false, pCamOk = false, pHello = false;
 float   pHeadingDeg = 0.0;
 uint16_t pLegMm = 0;
+uint8_t pCmd = CMD_NONE;          // latest CMD byte (RERUN: FINISH/STOPPED only)
+uint8_t pCmdRun = 0;              // consecutive good frames carrying pCmd
 
 uint8_t rxBuf[PERCEPT_LEN];
 uint8_t rxLen = 0;
@@ -181,6 +260,8 @@ void applyPercept(const uint8_t *f) {
   lidarRev = f[10];
   memcpy(&head_dd, f + 11, 2);
   memcpy(&leg,     f + 13, 2);
+  pCmdRun  = (f[15] == pCmd) ? (uint8_t)min(255, pCmdRun + 1) : 1;
+  pCmd     = f[15];
 
   pHeadingDeg = head_dd / 10.0;
   pLegMm      = leg;
@@ -221,8 +302,17 @@ void serviceLink() {
 // ============================================================================
 // RUN CONSTANTS
 // ============================================================================
-const uint16_t SIDE_OPEN_MM     = 1500;  // turn side above this = inner wall gone
+const uint16_t SIDE_OPEN_MM     = 1500;  // side above this = inner wall gone (before the lock: either side)
 const uint8_t  SIDE_OPEN_REVS   = 3;     // consecutive lidar REVOLUTIONS, not frames
+
+// A no-return reads FAR, which is past SIDE_OPEN_MM, so by default it counts as
+// "open" for the direction lock exactly as it does for every later corner.
+// The catch: an OUTER-side dropout lasting SIDE_OPEN_REVS revolutions before
+// the first corner would lock the wrong way. If the lock log shows a real
+// distance (not 9999) for the open side at the first corner, set this true:
+// the locking side must then return an actual distance past SIDE_OPEN_MM at
+// least once in its streak, and a dropout alone can never lock.
+const bool     LOCK_NEEDS_REAL_RETURN = false;
 
 const uint16_t WALL_PANIC_MM     = 200;
 const uint16_t WALL_CLEAR_MM     = 350;
@@ -251,17 +341,30 @@ RobotState    currentState = STATE_BOOT;
 bool          entered = false;
 unsigned long phaseT0 = 0;
 
-BlockColor lockedColor   = COLOR_NONE;
-bool       clockwiseMode = true;
-int        cornerCount   = 0;
+// Reporting only (STATUS frame); none of these drive a decision.
+RobotState    gTrackedState = STATE_BOOT;
+unsigned long gStateSinceMs = 0;          // when currentState last changed
+uint8_t       finishReason  = FINISH_NONE;
+bool          startedBlind  = false;      // this run's GO had the camera down
+uint8_t       runNumber     = 0;          // GOs since power-up (1 = first run)
+
+// Driving direction, locked at the first corner by whichever lidar side opens
+// first. clockwiseMode means nothing until dirLocked is set.
+bool dirLocked     = false;
+bool clockwiseMode = true;
+int  cornerCount   = 0;
+
+// A side may only lock the direction once it has shown a wall this run. A
+// blocked or broken sector reads FAR (> SIDE_OPEN_MM) from the start, and
+// without this it would look like "the inner wall ended" the moment we moved.
+bool wallSeenL = false, wallSeenR = false;
+
+// RERUN edge detector: cleared on entry to FINISH, set there by any CMD that
+// is not RERUN. See finishStep().
+bool rerunArmed = false;
 
 float targetHeading = 0.0;
 float laneHeading   = 0.0;
-// The first corner's line decides the driving direction, and it can fall under
-// the car in the middle of an avoid. Latching it at run level (not per-straight)
-// means the direction still locks if that happens.
-BlockColor lastFirstColor = COLOR_NONE;
-bool       firstLineSeen  = false;
 
 uint16_t frontAtStartMm = LIDAR_FAR;   // the finish line, measured not guessed
 
@@ -269,7 +372,6 @@ uint16_t frontAtStartMm = LIDAR_FAR;   // the finish line, measured not guessed
 bool          gImuFresh = false;
 float         gHeading = 0.0, gYawRate = 0.0, gPrevH = 0.0;
 unsigned long gPrevHT = 0;
-BlockColor    gRawColor = COLOR_NONE;
 
 // Odometry that NEVER resets. zeroEncoder() still zeroes TIM5 for the open
 // round's per-segment measurements, so the Pi needs its own monotonic count.
@@ -285,19 +387,11 @@ float wrapDeg(float a) {
   return a;
 }
 
-void tcaselect(uint8_t ch) {
-  if (ch > 7) return;
-  Wire.beginTransmission(TCA_ADDR); Wire.write(1 << ch); Wire.endTransmission();
-}
-
-void resetTCA() {
-  pinMode(TCA_RST_PIN, OUTPUT);
-  digitalWrite(TCA_RST_PIN, LOW);  delay(10);
-  digitalWrite(TCA_RST_PIN, HIGH); delay(10);
-}
+int gMotorPwm = 0;   // last commanded PWM, reported in STATUS
 
 void setMotorSpeed(int speed) {
   speed = constrain(speed, -255, 255);
+  gMotorPwm = speed;
   if (speed > 0)      { analogWrite(MOT_RPWM_PIN, speed); analogWrite(MOT_LPWM_PIN, 0); }
   else if (speed < 0) { analogWrite(MOT_RPWM_PIN, 0);     analogWrite(MOT_LPWM_PIN, -speed); }
   else                { analogWrite(MOT_RPWM_PIN, 0);     analogWrite(MOT_LPWM_PIN, 0); }
@@ -323,12 +417,9 @@ void serviceOdo() {
 }
 void zeroEncoder() { TIM5->CNT = 0; gLastRawEnc = 0; }
 
-// Clockwise means the inner block is on the right, so the RIGHT side gives way
-// at the corner. Counter-clockwise, the left.
-bool turnIsClockwise() {
-  return (lockedColor == COLOR_NONE) ? (lastFirstColor == COLOR_ORANGE) : clockwiseMode;
-}
-uint16_t turnSideMm() { return turnIsClockwise() ? lidarR : lidarL; }
+// Clockwise means the inner wall is on the right, so the RIGHT side gives way
+// at the corner. Counter-clockwise, the left. Only meaningful once dirLocked.
+uint16_t turnSideMm() { return clockwiseMode ? lidarR : lidarL; }
 
 // ---- IMU ----
 float readYaw() {
@@ -359,57 +450,6 @@ void zeroYaw() {
   Serial.println(F("# ERROR no IMU event to zero"));
 }
 
-// ---- floor colour ----
-void readColor(uint16_t &r, uint16_t &g, uint16_t &b, uint16_t &c) {
-  if (!tcsOk) { r = g = b = c = 0; return; }
-  tcaselect(TCS_CH);
-  Wire.beginTransmission(0x29);
-  Wire.write(0x80 | 0x20 | 0x14);      // command | auto-increment | CDATAL
-  Wire.endTransmission();
-  Wire.requestFrom((uint8_t)0x29, (uint8_t)8);
-  if (Wire.available() < 8) { r = g = b = c = 0; return; }
-  c  = (uint16_t)Wire.read();  c |= (uint16_t)Wire.read() << 8;
-  r  = (uint16_t)Wire.read();  r |= (uint16_t)Wire.read() << 8;
-  g  = (uint16_t)Wire.read();  g |= (uint16_t)Wire.read() << 8;
-  b  = (uint16_t)Wire.read();  b |= (uint16_t)Wire.read() << 8;
-}
-
-// Calibrated on the mat: white pR 47 / pB 19, orange pR 69 / pB 11,
-// blue pR 36 / pB 27. Orange is tested first.
-BlockColor classifyColor() {
-  uint16_t r, g, b, c;
-  readColor(r, g, b, c);
-  float total = (float)r + (float)g + (float)b;
-  if (total < 100.0f) return COLOR_NONE;
-  float pR = (r / total) * 100.0f;
-  float pB = (b / total) * 100.0f;
-  if (pR > 52.0f && pB < 18.0f) return COLOR_ORANGE;
-  if (pB > 23.0f && pR < 40.0f) return COLOR_BLUE;
-  return COLOR_NONE;
-}
-
-const unsigned long COLOR_CONFIRM_MS = 6;
-BlockColor    pendingColor = COLOR_NONE;
-unsigned long pendingStart = 0;
-void resetColorDetector() { pendingColor = COLOR_NONE; pendingStart = 0; }
-
-// Backing away from a wall drags the sensor back over lines already used.
-// Muting from the start of the reverse until we are forward of that point
-// again means those re-crossings are ignored. gRawColor is NOT muted, so the
-// LEDs still show what is underneath.
-bool colorMuted = false;
-long colorMuteFrom = 0;
-
-BlockColor detectColor(BlockColor wantColor) {
-  if (colorMuted) { resetColorDetector(); return COLOR_NONE; }
-  BlockColor raw = gRawColor;
-  if (wantColor != COLOR_NONE && raw != wantColor) raw = COLOR_NONE;
-  if (raw == COLOR_NONE)   { resetColorDetector(); return COLOR_NONE; }
-  if (raw != pendingColor) { pendingColor = raw; pendingStart = millis(); return COLOR_NONE; }
-  if (millis() - pendingStart >= COLOR_CONFIRM_MS) { resetColorDetector(); return raw; }
-  return COLOR_NONE;
-}
-
 void serviceSensors() {
   serviceLink();
   serviceOdo();
@@ -426,10 +466,11 @@ void serviceSensors() {
     gPrevH = h; gPrevHT = now; gHeading = h;
   }
 
-  gRawColor = classifyColor();
-  if (currentState != STATE_FINISH) {
-    digitalWrite(LED2_PIN, gRawColor == COLOR_ORANGE ? HIGH : LOW);
-    digitalWrite(LED3_PIN, gRawColor == COLOR_BLUE   ? HIGH : LOW);
+  // Latched in every state, so an avoid at the start cannot keep a side from
+  // ever proving it has a wall.
+  if (!lidarStale) {
+    if (lidarL <= SIDE_OPEN_MM) wallSeenL = true;
+    if (lidarR <= SIDE_OPEN_MM) wallSeenR = true;
   }
 }
 
@@ -451,13 +492,13 @@ void sendTelemetry() {
   f[2] = rxSeq;
 
   uint8_t st = 0;
-  if (fsmStarted && currentState != STATE_FINISH) st |= S_RUNNING;
+  if (fsmStarted && currentState != STATE_FINISH &&
+      currentState != STATE_STOPPED) st |= S_RUNNING;
   if (lidarStale)                st |= S_LIDAR_STALE;
   if (lidarDead)                 st |= S_LIDAR_DEAD;
-  if (lockedColor != COLOR_NONE) st |= S_DIR_LOCKED;
+  if (dirLocked)                 st |= S_DIR_LOCKED;
   if (clockwiseMode)             st |= S_CLOCKWISE;
   if (gPrevHT != 0)              st |= S_IMU_OK;
-  if (tcsOk)                     st |= S_COLOUR_OK;
   if (currentState == STATE_RECOVER) st |= S_RECOVERING;
   f[3] = st;
 
@@ -471,9 +512,7 @@ void sendTelemetry() {
   long     rem     = (currentState == STATE_AVOID)
                      ? (avoidLegTicks - (gOdoTicks - avoidBaseTicks)) : 0;
   uint16_t remMm   = (rem > 0) ? (uint16_t)min((long)0xFFFE, (long)(rem * MM_PER_TICK)) : 0;
-  uint8_t  floorC  = (gRawColor == COLOR_ORANGE) ? 1 : (gRawColor == COLOR_BLUE ? 2 : 0);
-
-  memcpy(f + 4,  &odoMm,   4);
+   memcpy(f + 4,  &odoMm,   4);
   memcpy(f + 8,  &spd,     2);
   memcpy(f + 10, &head_dd, 2);
   memcpy(f + 12, &yaw_dd,  2);
@@ -481,7 +520,7 @@ void sendTelemetry() {
   f[16] = state;
   f[17] = corners;
   memcpy(f + 18, &remMm,   2);
-  f[20] = floorC;
+  f[20] = 0;                           // floor colour: always none now
   f[21] = xor8(f + 2, TELEM_LEN - 3);
 
   Serial.write(f, TELEM_LEN);
@@ -559,10 +598,17 @@ bool turnArcStep(float target) {
 // ============================================================================
 void goState(RobotState s) { currentState = s; entered = false; }
 
-BlockColor dcWantColor;
-bool       dcColorArmed;
-long       dcBaseTicks, dcLockoutTicks, dcSafetyTicks;
-uint8_t    sideOpenCount = 0;
+long    dcBaseTicks, dcLockoutTicks, dcSafetyTicks;
+uint8_t openRevsL = 0, openRevsR = 0;   // consecutive revolutions each side has read open
+bool    realOpenL = false, realOpenR = false;   // that streak included a real distance, not just FAR
+bool    lidarHold = false;              // HEADING has parked the car: lidar dead
+
+// One lidar revolution for one side: extend or break its open streak.
+static inline void countOpenRev(uint8_t &n, bool &real, uint16_t mm) {
+  if (mm <= SIDE_OPEN_MM) { n = 0; real = false; return; }
+  if (n < 250) n++;
+  if (mm != LIDAR_FAR) real = true;
+}
 
 float turnTarget, turnAmount;
 
@@ -588,8 +634,6 @@ int        recoverTries = 0;
 void enterRecovery() {
   recoverReturnState   = currentState;
   recoverReturnEntered = entered;
-  colorMuted    = true;
-  colorMuteFrom = gOdoTicks;
   currentState  = STATE_RECOVER;
   entered = false;
 }
@@ -623,6 +667,31 @@ void recoverStep() {
 }
 
 // ============================================================================
+// RUN RESET
+//
+// Everything one run leaves behind. Called on every entry to BOOT, so a rerun
+// starts from the same state a power-up does. The yaw is deliberately NOT
+// re-zeroed: laneHeading is taken from wherever the car points at GO, and the
+// heading frame the Pi solves in stays continuous across runs.
+// ============================================================================
+void resetRun() {
+  dirLocked     = false;
+  clockwiseMode = true;
+  wallSeenL = wallSeenR = false;
+  cornerCount   = 0;
+  recoverTries  = 0;
+  lidarHold     = false;
+  avoidLockoutFrom    = gOdoTicks - 1000000L;   // far in the past: no lockout
+  firstSegmentCm      = 0.0;
+  fullStartStraightCm = 0.0;
+  haveFullStraight    = false;
+  finalDistanceCm     = FINAL_FALLBACK_CM;
+  fsTargetTicks       = (long)(FINAL_FALLBACK_CM * TICKS_PER_CM);
+  finishReason        = FINISH_NONE;                    // reporting only
+  startedBlind        = false;
+}
+
+// ============================================================================
 // STATE: BOOT
 //
 // Nothing happens until the Pi has sent one well-formed PERCEPT frame saying
@@ -631,6 +700,8 @@ void recoverStep() {
 // an obstacle round blind. If the camera never comes up but the lidar does, we
 // start anyway after CAMERA_GRACE_MS — an open-round lap scores more than a
 // car that never moves — and say so in the log.
+//
+// A RERUN comes back through here too: same handshake, same 5 s countdown.
 // ============================================================================
 void bootStep() {
   if (!entered) {
@@ -638,6 +709,7 @@ void bootStep() {
     phaseT0 = 0;
     setMotorSpeed(0);
     setServoAngle(SERVO_TRUE_STRAIGHT);
+    resetRun();
     Serial.println(F("# BOOT waiting for Pi"));
   }
 
@@ -647,6 +719,7 @@ void bootStep() {
                  (pLidarOk && (millis() - firstFrameMs > CAMERA_GRACE_MS));
     if (!ready) return;
     if (!pCamOk) Serial.println(F("# WARN camera down - lap will run blind to pillars"));
+    startedBlind = !pCamOk;
     phaseT0 = millis();
     Serial.println(F("# Pi ready - 5s countdown"));
   }
@@ -655,15 +728,11 @@ void bootStep() {
   if (millis() - phaseT0 < START_DELAY_MS) return;
 
   digitalWrite(LED1_PIN, HIGH);
-  lockedColor   = COLOR_NONE;
-  firstLineSeen = false;
-  cornerCount   = 0;
-  colorMuted   = false;
-  recoverTries = 0;
   laneHeading   = gHeading;
   targetHeading = laneHeading;
   frontAtStartMm = lidarF;            // the finish line, measured here
   zeroEncoder();
+  if (runNumber < 255) runNumber++;
   Serial.print(F("# GO  frontAtStart=")); Serial.println(frontAtStartMm);
   goState(STATE_HEADING);
 }
@@ -679,10 +748,9 @@ void bootStep() {
 void headingStep() {
   if (!entered) {
     entered = true;
-    dcWantColor   = lockedColor;
-    dcColorArmed  = (lockedColor == COLOR_NONE) ? firstLineSeen : false;
-    sideOpenCount = 0;
-    resetColorDetector();
+    openRevsL = openRevsR = 0;
+    realOpenL = realOpenR = false;
+    lidarHold = false;
     resetHeadingPid();
     dcBaseTicks = gOdoTicks;
     setMotorSpeed(BASE_SPEED);
@@ -710,9 +778,30 @@ void headingStep() {
     bool byOdo  = run >= fsTargetTicks;
     if (byWall || byOdo) {
       Serial.print(F("# FINISH by ")); Serial.println(byWall ? F("wall") : F("odo"));
+      finishReason = byWall ? FINISH_BY_WALL : FINISH_BY_ODO;
       goState(STATE_FINISH);
     }
     return;                            // no corners left, just the run-out
+  }
+
+  // ---- lidar gone: park until it is back ----
+  // Corners come only from the lidar now. The old fallback turned on the floor
+  // line; without it, driving on blind means missing the next corner and
+  // pushing into the outer wall with the wall panic disabled. So stop, and
+  // pick the straight up again from scratch when the lidar returns. (The
+  // final run-out above keeps going: it has the odometry fallback.)
+  if (lidarDead) {
+    if (!lidarHold) {
+      lidarHold = true;
+      setMotorSpeed(0);
+      Serial.println(F("# lidar dead - holding"));
+    }
+    return;
+  }
+  if (lidarHold) {
+    Serial.println(F("# lidar back"));
+    entered = false;                   // re-enter: speed, PID, counters
+    return;
   }
 
   long straightTicks = absEnc(gOdoTicks - dcBaseTicks);
@@ -726,57 +815,49 @@ void headingStep() {
   if (absEnc(readEncoder()) <= dcLockoutTicks) return;
   if (absEnc(gOdoTicks - avoidLockoutFrom) <= (long)(POST_AVOID_LOCKOUT_CM * TICKS_PER_CM)) return;
 
-  bool directionLocked = (lockedColor != COLOR_NONE);
-
-  // ---- colour gate: first corner, or the lidar-dead fallback ----
-  if (!dcColorArmed && (!directionLocked || lidarDead)) {
-    BlockColor c = detectColor(dcWantColor);
-    if (c != COLOR_NONE) {
-      dcColorArmed = true;
-      if (!directionLocked) { lastFirstColor = c; firstLineSeen = true; }
-      sideOpenCount = 0;
-      resetColorDetector();
-      Serial.print(F("# gate ")); Serial.print(c == COLOR_ORANGE ? F("ORANGE") : F("BLUE"));
-      Serial.print(F(" side=")); Serial.println(turnSideMm());
-    }
-  }
-  if (!directionLocked && !dcColorArmed) return;   // direction not known yet
-
-  // ---- turn confirm: counted per lidar REVOLUTION ----
+  // ---- side openings: counted per lidar REVOLUTION ----
   // Each bearing gets at most one new sample per revolution (~10 Hz on the C1),
   // so counting per frame at 50 Hz would "confirm" on one measurement resent.
-  uint16_t sideNow = turnSideMm();
+  // Both sides are always counted; before the lock both matter, after it only
+  // the locked side does.
   if (lidarStale) {
-    sideOpenCount = 0;
+    openRevsL = openRevsR = 0;
+    realOpenL = realOpenR = false;
   } else if (lidarRev != lastRev) {
     lastRev = lidarRev;
-    if (sideNow > SIDE_OPEN_MM) { if (sideOpenCount < 250) sideOpenCount++; }
-    else                        sideOpenCount = 0;
+    countOpenRev(openRevsL, realOpenL, lidarL);
+    countOpenRev(openRevsR, realOpenR, lidarR);
   }
-  bool sideOpen = (sideOpenCount >= SIDE_OPEN_REVS);
 
-  if (sideOpen || (lidarDead && dcColorArmed)) {
-    Serial.print(sideOpen ? F("# turn: side open ") : F("# turn: colour only "));
-    Serial.println(sideNow);
-
-    if (!directionLocked) {
-      lockedColor   = lastFirstColor;
-      clockwiseMode = (lockedColor == COLOR_ORANGE);
-      Serial.println(clockwiseMode ? F("# LOCKED CW (orange)") : F("# LOCKED CCW (blue)"));
-    }
-
-    // Fallback finish measurement only — see the note at the declaration.
-    float segCm = absEnc(readEncoder()) / TICKS_PER_CM;
-    if (cornerCount == 0)                            firstSegmentCm = segCm;
-    else if (cornerCount == 4)                     { fullStartStraightCm = segCm; haveFullStraight = true; }
-    else if (cornerCount == 8 && haveFullStraight)   fullStartStraightCm = 0.5 * (fullStartStraightCm + segCm);
-    if (haveFullStraight) {
-      finalDistanceCm = max(0.0f, fullStartStraightCm - firstSegmentCm);
-      fsTargetTicks   = (long)(finalDistanceCm * TICKS_PER_CM);
-    }
-
-    goState(STATE_TURN90);
+  if (!dirLocked) {
+    // First corner. The outer wall is continuous, so only the inner side can
+    // open: the first one to do so gives the direction. Both open at once is
+    // a blind lidar, not a corner — wait for one of them to see a wall again.
+    bool openL = wallSeenL && (openRevsL >= SIDE_OPEN_REVS) && (realOpenL || !LOCK_NEEDS_REAL_RETURN);
+    bool openR = wallSeenR && (openRevsR >= SIDE_OPEN_REVS) && (realOpenR || !LOCK_NEEDS_REAL_RETURN);
+    if (openL == openR) return;
+    dirLocked     = true;
+    clockwiseMode = openR;
+    Serial.print(clockwiseMode ? F("# LOCKED CW (right opened first)  L=")
+                               : F("# LOCKED CCW (left opened first)  L="));
+    Serial.print(lidarL); Serial.print(F(" R=")); Serial.println(lidarR);
+  } else if ((clockwiseMode ? openRevsR : openRevsL) < SIDE_OPEN_REVS) {
+    return;
   }
+
+  Serial.print(F("# turn: side open ")); Serial.println(turnSideMm());
+
+  // Fallback finish measurement only — see the note at the declaration.
+  float segCm = absEnc(readEncoder()) / TICKS_PER_CM;
+  if (cornerCount == 0)                            firstSegmentCm = segCm;
+  else if (cornerCount == 4)                     { fullStartStraightCm = segCm; haveFullStraight = true; }
+  else if (cornerCount == 8 && haveFullStraight)   fullStartStraightCm = 0.5 * (fullStartStraightCm + segCm);
+  if (haveFullStraight) {
+    finalDistanceCm = max(0.0f, fullStartStraightCm - firstSegmentCm);
+    fsTargetTicks   = (long)(finalDistanceCm * TICKS_PER_CM);
+  }
+
+  goState(STATE_TURN90);
 }
 
 // ============================================================================
@@ -792,6 +873,10 @@ void headingStep() {
 //   COMMIT  frozen. Ignore further updates and run the leg out on odometry.
 //           This is what carries the car past a pillar the camera can no
 //           longer see, and it survives a lidar dropout for the same reason.
+//
+// No corner watching here: the car is yawed, so the side beams are not square
+// to the walls. A corner that opens during an avoid is still open when HEADING
+// resumes, and is counted there.
 // ============================================================================
 void avoidStep() {
   if (!entered) {
@@ -824,17 +909,6 @@ void avoidStep() {
   }
 
   updateHeadingPid(avoidTargetHeading);
-
-  // Keep watching for the first corner line even mid-manoeuvre: if it passes
-  // under the car during an avoid and we are not looking, the direction never
-  // locks and HEADING stalls until the safety distance fires.
-  if (lockedColor == COLOR_NONE && !firstLineSeen) {
-    BlockColor c = detectColor(COLOR_NONE);
-    if (c != COLOR_NONE) {
-      lastFirstColor = c; firstLineSeen = true;
-      Serial.println(F("# first line seen during avoid"));
-    }
-  }
 
   long travelled = absEnc(gOdoTicks - avoidBaseTicks);
   bool done    = travelled >= avoidLegTicks;
@@ -871,6 +945,243 @@ void turn90Step() {
     zeroEncoder();                 // segment origin = this turn corner
     Serial.print(F("# lane heading ")); Serial.println(laneHeading);
     goState(STATE_HEADING);
+  }
+}
+
+// ============================================================================
+// STATE: FINISH  (stopped; the Pi can send the car round again)
+//
+// RERUN has to RISE while we sit here. rerunArmed is cleared on the way in and
+// set by any CMD that is not RERUN, so:
+//   - a 1 the Pi was already sending when the run ended does nothing until it
+//     drops and comes back,
+//   - holding 1 forever gives exactly one rerun, never run after run.
+// The rerun goes through BOOT like a power-up: HELLO, 5 s countdown, and the
+// finish line re-measured at GO from wherever the car sits now.
+// ============================================================================
+void finishStep() {
+  if (!entered) {
+    entered = true;
+    rerunArmed = false;
+    Serial.println(F("# FINISHED"));
+    setMotorSpeed(0);
+    setServoAngle(SERVO_TRUE_STRAIGHT);
+    digitalWrite(LED1_PIN, HIGH);
+    digitalWrite(LED2_PIN, HIGH);
+    digitalWrite(LED3_PIN, HIGH);
+  }
+
+  if (pCmd != CMD_RERUN) { rerunArmed = true; return; }
+  if (!rerunArmed || linkStale) return;
+
+  Serial.println(F("# RERUN from Pi"));
+  goState(STATE_BOOT);
+}
+
+// ============================================================================
+// STATE: STOPPED  (the Pi said STOP; RERUN leaves, exactly as from FINISH)
+//
+// Entered only through serviceCommands(). The motor was already cut there, the
+// moment the command confirmed; this holds it and shows it on the LEDs. RERUN
+// uses the same rising-edge rule as FINISH (rerunArmed is shared: only one of
+// the two states can be current), and goes back through BOOT: HELLO, 5 s
+// countdown, finish line re-measured at GO.
+// ============================================================================
+void stoppedStep() {
+  if (!entered) {
+    entered = true;
+    rerunArmed = false;
+    setMotorSpeed(0);
+    setServoAngle(SERVO_TRUE_STRAIGHT);
+    digitalWrite(LED1_PIN, LOW);
+    Serial.println(F("# STOPPED - RERUN to go again"));
+  }
+  // LED2/LED3 alternate: tells STOPPED apart from FINISH (all solid) at a glance.
+  bool ph = ((millis() / 250) & 1);
+  digitalWrite(LED2_PIN, ph ? HIGH : LOW);
+  digitalWrite(LED3_PIN, ph ? LOW : HIGH);
+
+  if (pCmd != CMD_RERUN) { rerunArmed = true; return; }
+  if (!rerunArmed || linkStale) return;
+
+  Serial.println(F("# RERUN from Pi"));
+  goState(STATE_BOOT);
+}
+
+// ============================================================================
+// COMMANDS  (PERCEPT byte 15; RERUN is handled inside finishStep/stoppedStep)
+// ============================================================================
+void serviceCommands() {
+  if (pCmdRun < CMD_CONFIRM_FRAMES) return;
+
+  if (pCmd == CMD_REBOOT) {
+    setMotorSpeed(0);
+    setServoAngle(SERVO_TRUE_STRAIGHT);
+    Serial.println(F("# REBOOT from Pi"));
+    Serial.flush();
+    delay(50);                             // let the line leave; servo settles
+    NVIC_SystemReset();                    // never returns
+  }
+
+  if (pCmd == CMD_STOP &&
+      currentState != STATE_STOPPED && currentState != STATE_FINISH) {
+    setMotorSpeed(0);                      // now, not on the next state step
+    setServoAngle(SERVO_TRUE_STRAIGHT);
+    Serial.println(F("# STOP from Pi"));
+    finishReason = FINISH_BY_STOP_CMD;
+    currentState = STATE_STOPPED;          // also abandons RECOVER: no return
+    entered = false;
+  }
+}
+
+// ============================================================================
+// STATUS  (10 Hz, reporting only)
+//
+//  off type field                      off type field
+//   2  u8   version (1)                 32  u16  lidar L mm (0xFFFF = far)
+//   3  u8   state                       34  u16  lidar R mm (0xFFFF = far)
+//   4  u8   flags   SF_*                36  u16  straight_mm      (HEADING)
+//   5  u8   flags2  SF2_*               38  u16  corner_lockout_mm left
+//   6  u8   pflags  PF_*                40  u16  avoid_lockout_mm left
+//   7  u8   pCmd                        42  u16  segment_mm (since GO / turn)
+//   8  u8   pCmdRun                     44  u16  finish_target_mm (odo fallback)
+//   9  u8   runNumber                   46  u16  front_at_start_mm (0xFFFF)
+//  10  u16  state_ms                    48  u16  phase_mm (AVOID/TURN90/RECOVER)
+//  12  u16  countdown_ms  (BOOT)        50  u16  avoid_leg_mm     (AVOID)
+//  14  u16  grace_ms      (BOOT)        52  u16  link_age_ms  (0xFFFF never)
+//  16  u16  avoid_ms      (AVOID)       54  u16  lidar_age_ms (0xFFFF never)
+//  18  i16  lane_heading   x10          56  u32  percept_frames
+//  20  i16  target_heading x10          60  u8   xor8 over 2..59
+//  22  i16  servo_cmd x10 (servo deg)
+//  24  i16  motor_pwm
+//  26  u8   openRevsL      27 u8 openRevsR
+//  28  u8   recoverTries   29 u8 recoverReturnState
+//  30  u8   finishReason   31 u8 reserved (0)
+// ============================================================================
+static inline uint16_t sat16(long v) {
+  return v <= 0 ? 0 : (v >= 0xFFFE ? 0xFFFE : (uint16_t)v);   // 0xFFFF = invalid
+}
+static inline uint16_t farToInvalid(uint16_t v) { return v == LIDAR_FAR ? 0xFFFF : v; }
+static inline long     ticksToMm(long t) { return (long)(t * MM_PER_TICK); }
+static inline int16_t  decideg(float deg) {
+  float v = deg * 10.0f;
+  if (v >  32767.0f) v =  32767.0f;
+  if (v < -32768.0f) v = -32768.0f;
+  return (int16_t)(v >= 0.0f ? v + 0.5f : v - 0.5f);
+}
+
+void sendStatus() {
+  const unsigned long now = millis();
+  const bool inBoot    = currentState == STATE_BOOT;
+  const bool inHeading = currentState == STATE_HEADING;
+  const bool inAvoid   = currentState == STATE_AVOID;
+  const bool inTurn    = currentState == STATE_TURN90;
+  const bool inRecover = currentState == STATE_RECOVER;
+  const bool parked    = currentState == STATE_FINISH || currentState == STATE_STOPPED;
+
+  uint8_t f[STATUS_LEN];
+  memset(f, 0, sizeof(f));
+  f[0] = STATUS_SYNC0; f[1] = STATUS_SYNC1;
+  f[2] = STATUS_VERSION;
+  f[3] = (uint8_t)currentState;
+
+  uint8_t fl = 0;
+  if (fsmStarted)                  fl |= SF_FSM_STARTED;
+  if (inBoot && phaseT0 != 0)      fl |= SF_BOOT_READY;
+  if (lidarHold)                   fl |= SF_LIDAR_HOLD;
+  if (linkStale)                   fl |= SF_LINK_STALE;
+  if (startedBlind)                fl |= SF_BLIND;
+  if (parked && rerunArmed)        fl |= SF_RERUN_ARMED;
+  if (wallSeenL)                   fl |= SF_WALL_SEEN_L;
+  if (wallSeenR)                   fl |= SF_WALL_SEEN_R;
+  f[4] = fl;
+  uint8_t fl2 = 0;
+  if (realOpenL)                   fl2 |= SF2_REAL_OPEN_L;
+  if (realOpenR)                   fl2 |= SF2_REAL_OPEN_R;
+  if (LOCK_NEEDS_REAL_RETURN)      fl2 |= SF2_LOCK_NEEDS_REAL;
+  f[5] = fl2;
+  uint8_t pf = 0;
+  if (pHello)                      pf |= PF_HELLO;
+  if (pLidarOk)                    pf |= PF_LIDAR_OK;
+  if (pCamOk)                      pf |= PF_CAM_OK;
+  if (pGreen)                      pf |= PF_GREEN;
+  pf |= (pAction & 0x03) << PF_ACTION_SHIFT;
+  f[6] = pf;
+  f[7] = pCmd;
+  f[8] = pCmdRun;
+  f[9] = runNumber;
+
+  uint16_t stateMs   = sat16((long)(now - gStateSinceMs));
+  uint16_t countdown = (inBoot && phaseT0 != 0)
+                       ? sat16((long)START_DELAY_MS - (long)(now - phaseT0)) : 0;
+  uint16_t grace     = (inBoot && fsmStarted && phaseT0 == 0)
+                       ? sat16((long)CAMERA_GRACE_MS - (long)(now - firstFrameMs)) : 0;
+  uint16_t avoidMs   = inAvoid ? sat16((long)(now - phaseT0)) : 0;
+
+  float   target  = inAvoid ? avoidTargetHeading : (inTurn ? turnTarget : targetHeading);
+  int16_t laneDd  = decideg(laneHeading);
+  int16_t tgtDd   = decideg(target);
+  int16_t servoDd = decideg(lastServoCmd);
+  int16_t pwm     = (int16_t)gMotorPwm;
+
+  f[26] = openRevsL;
+  f[27] = openRevsR;
+  f[28] = (uint8_t)recoverTries;
+  f[29] = (uint8_t)recoverReturnState;
+  f[30] = finishReason;
+
+  uint16_t lidL       = farToInvalid(lidarL);
+  uint16_t lidR       = farToInvalid(lidarR);
+  uint16_t straightMm = inHeading ? sat16(ticksToMm(absEnc(gOdoTicks - dcBaseTicks))) : 0;
+  uint16_t cornerLock = inHeading ? sat16(ticksToMm(dcLockoutTicks - absEnc(readEncoder()))) : 0;
+  uint16_t avoidLock  = sat16(ticksToMm((long)(POST_AVOID_LOCKOUT_CM * TICKS_PER_CM)
+                                        - absEnc(gOdoTicks - avoidLockoutFrom)));
+  uint16_t segmentMm  = sat16(ticksToMm(absEnc(readEncoder())));
+  uint16_t finTarget  = sat16(ticksToMm(fsTargetTicks));
+  uint16_t frontStart = farToInvalid(frontAtStartMm);
+  uint16_t phaseMm = 0, legMm = 0;
+  if (inAvoid) {
+    phaseMm = sat16(ticksToMm(absEnc(gOdoTicks - avoidBaseTicks)));
+    legMm   = sat16(ticksToMm(avoidLegTicks));
+  } else if (inTurn) {
+    phaseMm = sat16(ticksToMm(absEnc(readEncoder() - turnStartTicks)));
+  } else if (inRecover && entered) {
+    phaseMm = sat16(ticksToMm(absEnc(gOdoTicks - recoverBaseTicks)));
+  }
+  uint16_t linkAge  = perceptFrames ? sat16((long)(now - linkLastMs))  : 0xFFFF;
+  uint16_t lidarAge = lidarLastMs   ? sat16((long)(now - lidarLastMs)) : 0xFFFF;
+  uint32_t frames   = perceptFrames;
+
+  memcpy(f + 10, &stateMs,    2);
+  memcpy(f + 12, &countdown,  2);
+  memcpy(f + 14, &grace,      2);
+  memcpy(f + 16, &avoidMs,    2);
+  memcpy(f + 18, &laneDd,     2);
+  memcpy(f + 20, &tgtDd,      2);
+  memcpy(f + 22, &servoDd,    2);
+  memcpy(f + 24, &pwm,        2);
+  memcpy(f + 32, &lidL,       2);
+  memcpy(f + 34, &lidR,       2);
+  memcpy(f + 36, &straightMm, 2);
+  memcpy(f + 38, &cornerLock, 2);
+  memcpy(f + 40, &avoidLock,  2);
+  memcpy(f + 42, &segmentMm,  2);
+  memcpy(f + 44, &finTarget,  2);
+  memcpy(f + 46, &frontStart, 2);
+  memcpy(f + 48, &phaseMm,    2);
+  memcpy(f + 50, &legMm,      2);
+  memcpy(f + 52, &linkAge,    2);
+  memcpy(f + 54, &lidarAge,   2);
+  memcpy(f + 56, &frames,     4);
+  f[60] = xor8(f + 2, STATUS_LEN - 3);
+
+  Serial.write(f, STATUS_LEN);
+}
+
+void trackState() {
+  if (currentState != gTrackedState) {
+    gTrackedState = currentState;
+    gStateSinceMs = millis();
   }
 }
 
@@ -915,15 +1226,6 @@ void initHardware() {
   HAL_TIM_Encoder_Start(&htim5, TIM_CHANNEL_ALL);
   gLastRawEnc = readEncoder();
 
-  // ---- I2C + colour ----
-  resetTCA();
-  Wire.setSCL(I2C_SCL); Wire.setSDA(I2C_SDA);
-  Wire.begin(); Wire.setClock(400000);
-  delay(100);
-  tcaselect(TCS_CH); delay(10);
-  tcsOk = tcs.begin();
-  Serial.println(tcsOk ? F("# colour CH4 READY") : F("# colour CH4 FAILED"));
-
   // ---- IMU over SPI1 ----
   SPI_IMU.begin();
   if (myIMU.beginSPI(IMU_CS_PIN, IMU_INT_PIN, IMU_RST_PIN, 3000000, SPI_IMU)) {
@@ -944,10 +1246,12 @@ void setup() {
 
 void loop() {
   serviceSensors();
+  serviceCommands();                      // STOP / REBOOT from PERCEPT byte 15
 
-  static uint32_t lastTelem = 0;
+  static uint32_t lastTelem = 0, lastStatus = 0;
   uint32_t now = millis();
   if (now - lastTelem >= TELEM_PERIOD_MS) { lastTelem = now; sendTelemetry(); }
+  if (now - lastStatus >= STATUS_PERIOD_MS) { lastStatus = now; sendStatus(); }
 
   if (!fsmStarted) {
     if (perceptFrames == 0) {
@@ -959,24 +1263,23 @@ void loop() {
     Serial.println(F("# first PERCEPT frame received"));
   }
 
-  // Release the colour mute once we are forward of where the reverse began.
-  if (colorMuted && currentState != STATE_RECOVER && gOdoTicks >= colorMuteFrom) {
-    colorMuted = false;
-    Serial.println(F("# colour re-enabled"));
-  }
-
   // Wall panic overlay. Disabled when the lidar is stale — there is no front
   // distance to act on, and a frozen value would latch it.
   if (!lidarStale &&
       currentState != STATE_RECOVER && currentState != STATE_BOOT &&
-      currentState != STATE_FINISH &&
+      currentState != STATE_FINISH && currentState != STATE_STOPPED &&
       recoverTries < RECOVER_MAX_TRIES &&
       lidarF <= WALL_PANIC_MM) {
     enterRecovery();
   }
 
-  if (currentState != STATE_BOOT && currentState != STATE_FINISH) {
+  if (currentState != STATE_BOOT && currentState != STATE_FINISH &&
+      currentState != STATE_STOPPED) {
     digitalWrite(LED1_PIN, lidarStale ? (((now / 100) & 1) ? HIGH : LOW) : HIGH);
+  }
+  if (currentState != STATE_FINISH && currentState != STATE_STOPPED) {
+    digitalWrite(LED2_PIN, (dirLocked &&  clockwiseMode) ? HIGH : LOW);
+    digitalWrite(LED3_PIN, (dirLocked && !clockwiseMode) ? HIGH : LOW);
   }
 
   switch (currentState) {
@@ -985,17 +1288,9 @@ void loop() {
     case STATE_AVOID:   avoidStep();   break;
     case STATE_TURN90:  turn90Step();  break;
     case STATE_RECOVER: recoverStep(); break;
-
-    case STATE_FINISH:
-      if (!entered) {
-        entered = true;
-        Serial.println(F("# FINISHED"));
-        setMotorSpeed(0);
-        setServoAngle(SERVO_TRUE_STRAIGHT);
-        digitalWrite(LED1_PIN, HIGH);
-        digitalWrite(LED2_PIN, HIGH);
-        digitalWrite(LED3_PIN, HIGH);
-      }
-      break;
+    case STATE_FINISH:  finishStep();  break;
+    case STATE_STOPPED: stoppedStep(); break;
   }
+
+  trackState();
 }
