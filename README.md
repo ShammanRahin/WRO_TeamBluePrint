@@ -120,18 +120,19 @@ Autonomous miniature racing in the WRO Future Engineers category requires solvin
 
 ### 3D CAD Digital Twin & Interactive Assembly
 
-> **Interactive 3D on GitHub**: GitHub natively supports interactive WebGL 3D rendering. **Click the rotating assembly below** or open [`models/ASMB.stl`](models/ASMB.stl) to rotate, zoom, and inspect the physical robot assembly directly in your browser. The master engineering model is also available as [`models/ASMB.step`](models/ASMB.step).
+> **Interactive 3D on GitHub**: GitHub natively supports interactive WebGL 3D rendering. **Click the rotating assembly below** or open [`models/ASMB.stl`](models/ASMB.stl) to rotate, zoom, and inspect the physical robot assembly directly in your browser. Complete engineering assemblies are provided in [`models/ASMB.3mf`](models/ASMB.3mf) (native multi-material) and [`models/ASMB.step`](models/ASMB.step) (parametric CAD).
 
 <p align="center">
   <a href="models/ASMB.stl" title="Click to open interactive 3D WebGL viewer on GitHub">
-    <img src="media/bot/cad_assembly_360.gif" alt="Team Blueprint WRO 2026 Autonomous Vehicle - 3D CAD Assembly" width="92%"/>
+    <img src="media/bot/cad_assembly_360.gif?v=3" alt="Team Blueprint WRO 2026 Autonomous Vehicle - 3D CAD Assembly" width="92%"/>
   </a>
 </p>
 
 <p align="center">
   <a href="models/ASMB.stl"><img src="https://img.shields.io/badge/GitHub%203D%20Viewer-Rotate%20ASMB.stl%20in%203D-00e5ff?style=for-the-badge&logo=github&logoColor=black" alt="Rotate 3D Model on GitHub"/></a>
+  <a href="models/ASMB.3mf"><img src="https://img.shields.io/badge/3D%20Print%20Assembly-ASMB.3mf%20(11.1%20MB)-10b981?style=for-the-badge&logo=curseforge" alt="Download 3MF"/></a>
   <a href="models/ASMB.step"><img src="https://img.shields.io/badge/CAD%20Master%20Assembly-ASMB.step%20(64.8%20MB)-e02838?style=for-the-badge&logo=autodesk" alt="Download STEP"/></a>
-  <a href="models/"><img src="https://img.shields.io/badge/20%20Printable%20STLs-Part%20Catalog-374151?style=for-the-badge" alt="Individual STLs"/></a>
+  <a href="models/"><img src="https://img.shields.io/badge/Individual%20STLs-Part%20Catalog-374151?style=for-the-badge" alt="Individual STLs"/></a>
 </p>
 
 ### Vehicle Photographs (6 Required Perspectives)
