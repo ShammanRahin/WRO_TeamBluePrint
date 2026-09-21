@@ -1,12 +1,28 @@
-# models
+# models — 3D CAD & Printable Components
 
 Files used to produce the physical parts — 3D-printed and machined/cut pieces for **Team Blueprint** (WRO Future Engineers 2026).
+
+<p align="center">
+  <a href="ASMB.stl" title="Click to open interactive 3D WebGL viewer on GitHub">
+    <img src="../media/bot/cad_assembly_360.gif?v=3" alt="Team Blueprint WRO 2026 Autonomous Vehicle - 3D CAD Assembly" width="90%"/>
+  </a>
+</p>
+
+<p align="center">
+  <a href="ASMB.stl"><img src="https://img.shields.io/badge/GitHub%203D%20Viewer-Open%20%26%20Rotate%20ASMB.stl-00e5ff?style=for-the-badge&logo=github&logoColor=black" alt="Open 3D Model on GitHub"/></a>
+  <a href="ASMB.3mf"><img src="https://img.shields.io/badge/3D%20Print%20Assembly-ASMB.3mf%20(11.1%20MB)-10b981?style=for-the-badge&logo=curseforge" alt="Download 3MF"/></a>
+  <a href="ASMB.step"><img src="https://img.shields.io/badge/Parametric%20CAD-Download%20ASMB.step%20(64.8%20MB)-e02838?style=for-the-badge&logo=autodesk" alt="Download STEP"/></a>
+</p>
+
+> **Interactive 3D on GitHub**: GitHub natively renders `.stl` files in 3D! Simply click [`ASMB.stl`](ASMB.stl) in this directory or the button above to rotate, inspect, and pan around the complete robot in your browser without installing any software.
 
 ## Available CAD & 3D Printable Models
 
 | Model File | Part / Subsystem | Format | File Size | Description |
 |---|---|---|---|---|
-| [`Front Bumper.step`](Front%20Bumper.step) | Front Bumper & Sensor Assembly | STEP AP214 | ~61.8 MB | Master CAD assembly for front crash protection, ToF sensor mounting & chassis interface |
+| [`ASMB.stl`](ASMB.stl) | Full Assembled Robot (Interactive 3D Preview) | STL (Binary) | ~38.2 MB | Complete assembled vehicle (764k triangles) — **click to view in 3D directly on GitHub** |
+| [`ASMB.3mf`](ASMB.3mf) | Complete Multi-Part 3MF Assembly | 3MF (Archive) | ~11.1 MB | Master production print assembly with exact component placements & colors |
+| [`ASMB.step`](ASMB.step) | Master CAD Assembly | STEP AP214 | ~64.8 MB | Parametric engineering CAD assembly for Fusion 360 / SolidWorks |
 | [`Front Bumper.stl`](Front%20Bumper.stl) | Front Bumper | STL (Binary) | ~822 KB | 3D print-ready mesh for front bumper and sensor mount |
 | [`Front Bumper v45.stl`](Front%20Bumper%20v45.stl) | Front Bumper (v45 Revision) | STL (Binary) | ~1.42 MB | Latest revision of front bumper mesh |
 | [`Base Plate.stl`](Base%20Plate.stl) | Main Chassis Baseplate | STL (Binary) | ~1.36 MB | 3D print-ready main vehicle chassis bottom plate |
