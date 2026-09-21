@@ -118,6 +118,22 @@ Autonomous miniature racing in the WRO Future Engineers category requires solvin
   <img src="media/components/hardware_components.png" alt="Vehicle Hardware Architecture - Real Physical Components" width="100%"/>
 </p>
 
+### 3D CAD Digital Twin & Interactive Assembly
+
+> **Interactive 3D on GitHub**: GitHub natively supports interactive WebGL 3D rendering. **Click the rotating assembly below** or open [`models/ASMB.stl`](models/ASMB.stl) to rotate, zoom, and inspect the physical robot assembly directly in your browser. The master engineering model is also available as [`models/ASMB.step`](models/ASMB.step).
+
+<p align="center">
+  <a href="models/ASMB.stl" title="Click to open interactive 3D WebGL viewer on GitHub">
+    <img src="media/bot/cad_assembly_360.gif" alt="Team Blueprint WRO 2026 Autonomous Vehicle - 3D CAD Assembly" width="92%"/>
+  </a>
+</p>
+
+<p align="center">
+  <a href="models/ASMB.stl"><img src="https://img.shields.io/badge/GitHub%203D%20Viewer-Rotate%20ASMB.stl%20in%203D-00e5ff?style=for-the-badge&logo=github&logoColor=black" alt="Rotate 3D Model on GitHub"/></a>
+  <a href="models/ASMB.step"><img src="https://img.shields.io/badge/CAD%20Master%20Assembly-ASMB.step%20(64.8%20MB)-e02838?style=for-the-badge&logo=autodesk" alt="Download STEP"/></a>
+  <a href="models/"><img src="https://img.shields.io/badge/20%20Printable%20STLs-Part%20Catalog-374151?style=for-the-badge" alt="Individual STLs"/></a>
+</p>
+
 ### Vehicle Photographs (6 Required Perspectives)
 
 > Captured in full competition configuration with 3D-printed red chassis, obstacle round camera mast, and dual-tier compute platform. High-resolution source images are located in [`v-photos/`](v-photos/README.md).

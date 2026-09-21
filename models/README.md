@@ -1,6 +1,19 @@
-# models
+# models — 3D CAD & Printable Components
 
 Files used to produce the physical parts — 3D-printed and machined/cut pieces for **Team Blueprint** (WRO Future Engineers 2026).
+
+<p align="center">
+  <a href="ASMB.stl" title="Click to open interactive 3D WebGL viewer on GitHub">
+    <img src="../media/bot/cad_assembly_360.gif" alt="Team Blueprint WRO 2026 Autonomous Vehicle - 3D CAD Assembly" width="90%"/>
+  </a>
+</p>
+
+<p align="center">
+  <a href="ASMB.stl"><img src="https://img.shields.io/badge/GitHub%203D%20Viewer-Open%20%26%20Rotate%20ASMB.stl-00e5ff?style=for-the-badge&logo=github&logoColor=black" alt="Open 3D Model on GitHub"/></a>
+  <a href="ASMB.step"><img src="https://img.shields.io/badge/Parametric%20CAD-Download%20ASMB.step%20(64.8%20MB)-e02838?style=for-the-badge&logo=autodesk" alt="Download STEP"/></a>
+</p>
+
+> **Interactive 3D on GitHub**: GitHub natively renders `.stl` files in 3D! Simply click [`ASMB.stl`](ASMB.stl) in this directory or the button above to rotate, inspect, and pan around the complete robot in your browser without installing any software.
 
 ## Available CAD & 3D Printable Models
 
