@@ -19,7 +19,7 @@
 //
 // Everything the old file did between those - tracks, pass planning, corner
 // triggers, levelling, the 3-point sequencing, the corner-exit table - is
-// gone from here and lives on the Pi. The parameter table shrank from 87
+// gone from here and lives on the Pi. The parameter table shrank from 91
 // entries to 20 for the same reason: this file no longer runs the logic those
 // numbers described.
 //
@@ -35,6 +35,11 @@
 // NEW SINCE THE FSM MOVED: a link-loss motor cut. The old firmware had none
 // deliberately - a car whose Pi died carried on under its own state machine.
 // It has no state machine now, so silence means stop.
+//
+// HOST BUILD: firmware/sim/build.sh compiles this file unmodified for a PC,
+// and tests/test_firmware_sim.py drives it over the real wire - including a
+// full closed-loop lap with the Pi's FSM. That checks the logic and the
+// protocol; it cannot check the hardware below.
 //
 // BENCH-VERIFIED (unchanged from the previous firmware)
 //   motor    PA2 forward, PA3 reverse
@@ -535,7 +540,7 @@ void sendTelem() {
 // ============================================================
 // PARAMETER TABLE  (Pi-owned: RAM only, re-pushed after every reset)
 // ============================================================
-// 20 entries, down from 87. Everything that described planning or passing
+// 20 entries, down from 91. Everything that described planning or passing
 // went to the Pi with the logic that read it; what is left describes this
 // board's hardware and the loops it still runs.
 //
