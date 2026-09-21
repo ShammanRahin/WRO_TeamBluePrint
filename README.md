@@ -114,10 +114,6 @@ Autonomous miniature racing in the WRO Future Engineers category requires solvin
 
 ## 3. The Vehicle
 
-<p align="center">
-  <img src="media/components/hardware_components.png" alt="Vehicle Hardware Architecture - Real Physical Components" width="100%"/>
-</p>
-
 ### 3D CAD Digital Twin & Interactive Assembly
 
 > **Interactive 3D on GitHub**: GitHub natively supports interactive WebGL 3D rendering. **Click the rotating assembly below** or open [`models/ASMB.stl`](models/ASMB.stl) to rotate, zoom, and inspect the physical robot assembly directly in your browser. Complete engineering assemblies are provided in [`models/ASMB.3mf`](models/ASMB.3mf) (native multi-material) and [`models/ASMB.step`](models/ASMB.step) (parametric CAD).
@@ -161,6 +157,25 @@ Autonomous miniature racing in the WRO Future Engineers category requires solvin
     <td align="center" width="33%"><a href="v-photos/bottom.jpg"><img src="v-photos/bottom.jpg" alt="Bottom View" width="280"/></a><br/><sub><b>Bottom</b>: TCS34725 floor sensor &amp; underbody</sub></td>
   </tr>
 </table>
+
+### Bill of Materials & Hardware Components
+
+> Below is the complete as-built hardware bill of materials for Team Blueprint, including actual component photographs, functional subsystem assignments, international supplier links, and local Bangladesh supplier links with current market prices. See [`BOM.md`](BOM.md) for full power/mass budgets.
+
+| Photo | Component & Specification | Subsystem / Role | International Link & Price | Local Link (BD) & Price |
+|:---:|:---|:---|:---:|:---:|
+| <img src="media/components/blackpill.jpg" width="70" alt="STM32F411CEU6 Black Pill"/> | **STM32F411CEU6 "Black Pill"**<br/>ARM Cortex-M4 @ 100 MHz, 512 KB Flash, 128 KB SRAM | Main Real-time Microcontroller (Firmware & Low-Level Control) | [WeAct Studio / AliExpress](https://www.aliexpress.com/item/1005001456186625.html)<br/>**~$3.80** | [RoboticsBD](https://www.roboticsbd.com/development-boards/stm32f411ceu6-black-pill-development-board)<br/>**~৳520** |
+| <img src="media/components/pi5.png" width="70" alt="Raspberry Pi 5 8GB"/> | **Raspberry Pi 5 (8 GB)**<br/>Broadcom BCM2712 Quad-core ARM Cortex-A76 @ 2.4 GHz | High-Level AI, Vision Processing & LiDAR SLAM Compute | [Raspberry Pi Foundation](https://www.raspberrypi.com/products/raspberry-pi-5/) / [DigiKey](https://www.digikey.com/en/products/detail/raspberry-pi/SC1112/21657805)<br/>**~$80.00** | [RoboticsBD](https://www.roboticsbd.com/single-board-computers/raspberry-pi-5-8gb)<br/>**~৳12,500** |
+| <img src="media/components/rplidar_c1.jpg" width="70" alt="Slamtec RPLIDAR C1"/> | **Slamtec RPLIDAR C1**<br/>360° DTOF Laser Scanner, 12 m range, 5 kHz sample rate | 2D LiDAR Localization & Obstacle Boundary Mapping | [Slamtec](https://www.slamtec.com/en/Lidar/C1) / [RobotShop](https://www.robotshop.com/products/slamtec-rplidar-c1-360-degree-laser-range-scanner)<br/>**~$89.00** | [RoboticsBD](https://www.roboticsbd.com/sensors/slamtec-rplidar-c1)<br/>**~৳13,500** |
+| <img src="media/components/camera_fisheye.jpg" width="70" alt="160° Fisheye Camera Module"/> | **160° Ultra-Wide Fisheye Camera**<br/>OV5647 5 MP, low-distortion panoramic optics | Color Computer Vision (Red / Green Pillar Tracking) | [Waveshare](https://www.waveshare.com/rpi-camera-g.htm) / [AliExpress](https://www.aliexpress.com/item/32819894065.html)<br/>**~$11.50** | [RoboticsBD](https://www.roboticsbd.com/camera-modules/raspberry-pi-fisheye-camera-160-fov)<br/>**~৳1,650** |
+| <img src="media/components/servo.jpg" width="70" alt="JX PS-1171MG Digital Servo"/> | **JX PS-1171MG Digital Servo**<br/>17 g, metal-gear, 3.5 kg·cm torque @ 6 V, 0.11 s/60° | Ackermann Kinematic Steering ($\pm 35^\circ$ travel) | [Banggood](https://www.banggood.com/JX-PDI-1171MG-17g-3_5kg-Metal-Gear-Digital-Core-Servo-p-1075163.html) / [AliExpress](https://www.aliexpress.com/item/32798939228.html)<br/>**~$7.20** | [RoboticsBD](https://www.roboticsbd.com/motors-servos/jx-servo-ps-1171mg-metal-gear-digital-servo)<br/>**~৳950** |
+| <img src="media/components/motor_25ga_clean.png" width="70" alt="25GA-370 12V DC Gearmotor"/> | **25GA-370 12V DC Gearmotor**<br/>1331 RPM motor, integrated magnetic Hall encoder | Primary Traction Powertrain (5:1 external reduction) | [Pololu / AliExpress](https://www.aliexpress.com/item/32854341951.html)<br/>**~$10.50** | [RoboticsBD](https://www.roboticsbd.com/motors-servos/25ga-370-12v-dc-gearmotor-with-encoder)<br/>**~৳1,250** |
+| <img src="media/components/bts7960_clean.png" width="70" alt="BTS7960 43A Motor Driver"/> | **BTS7960 43A High-Power Driver**<br/>Dual Infineon half-bridge, PWM forward/reverse/brake | Motor Power Drive & Regenerative Braking | [Amazon](https://www.amazon.com/dp/B07TFB22H5) / [AliExpress](https://www.aliexpress.com/item/1005001621844976.html)<br/>**~$4.80** | [TechshopBD](https://techshopbd.com/detail/1820/BTS7960-43A-Motor-Driver)<br/>**~৳620** |
+| <img src="media/components/bno085.jpg" width="70" alt="BNO085 9-DOF IMU"/> | **BNO085 9-DOF IMU Module**<br/>ARM Cortex-M0+ sensor hub, SH-2 Kalman fusion, SPI | Absolute Heading, Drift-Free Yaw & Race Odometry | [Adafruit](https://www.adafruit.com/product/4754) / [SparkFun](https://www.sparkfun.com/products/16974)<br/>**~$19.95** | [RoboticsBD](https://www.roboticsbd.com/sensors/bno085-9-dof-imu-sensor-module)<br/>**~৳2,850** |
+| <img src="media/components/vl53l1x.jpg" width="70" alt="ST VL53L1X / VL53L0X ToF Sensors"/> | **STMicroelectronics VL53L1X / VL53L0X**<br/>940 nm FlightSense VCSEL ToF, collimated snout | Wall Distance Ranging & Parking Bay Detection | [Pololu](https://www.pololu.com/product/3415) / [Adafruit](https://www.adafruit.com/product/3967)<br/>**~$4.50 ea.** | [RoboticsBD](https://www.roboticsbd.com/sensors/vl53l1x-time-of-flight-distance-sensor)<br/>**~৳520 ea.** |
+| <img src="media/components/tcs34725.jpg" width="70" alt="TCS34725 RGB Color Sensor"/> | **TCS34725 RGB Color Sensor**<br/>Integrated IR blocking filter, I²C interface @ 0x29 | Floor Line Detection & Orange Lap Counter | [Adafruit](https://www.adafruit.com/product/1334) / [AliExpress](https://www.aliexpress.com/item/32832813583.html)<br/>**~$4.20** | [RoboticsBD](https://www.roboticsbd.com/sensors/tcs34725-rgb-color-sensor-module)<br/>**~৳480** |
+| <img src="media/components/tca9548a.jpg" width="70" alt="TCA9548A / PCA9548A I2C Mux"/> | **TCA9548A / PCA9548A I²C Multiplexer**<br/>8-channel bidirectional translation, address 0x70 | Multi-Sensor Bus Arbitrator (Prevents Address Collisions) | [Adafruit](https://www.adafruit.com/product/2701) / [AliExpress](https://www.aliexpress.com/item/32831201726.html)<br/>**~$2.20** | [TechshopBD](https://techshopbd.com/detail/2984/TCA9548A-I2C-Multiplexer)<br/>**~৳280** |
+| <img src="media/components/lipo_3s.jpg" width="70" alt="3S 11.1V LiPo Battery"/> | **3S 11.1V 75C LiPo Battery**<br/>High-discharge lithium-polymer pack with XT30/XT60 | Main Vehicle Traction & Regulated Electronics Power | [HobbyKing](https://hobbyking.com/) / [AliExpress](https://www.aliexpress.com/)<br/>**~$14.00** | [RoboticsBD](https://www.roboticsbd.com/batteries-chargers/3s-lipo-battery-pack)<br/>**~৳1,850** |
 
 ### As-Built System Specifications
 
