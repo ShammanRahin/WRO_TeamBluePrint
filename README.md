@@ -432,7 +432,7 @@ Self-audit against the **WRO Future Engineers 2026 General Rules** documentation
 | **Driving Demonstration Videos** | **Done** | YouTube links in [`video/video.md`](video/video.md) |
 | **Vehicle Photos (All 6 Sides)** | **Done** | Included in [Section 3](#vehicle-photographs-6-required-perspectives) and [`v-photos/`](v-photos/README.md) |
 | **Team Photos (Official & Funny)** | **Missing** | [`t-photos/`](t-photos/README.md) contains only the instructions |
-| **CAD Sources & Printable Models** | **Done** | Full CAD assembly (`Front Bumper.step`) & 3D-printable STLs in [`models/`](models/README.md) |
+| **CAD Sources & Printable Models** | **Done** | Interactive 3D assembly ([`ASMB.stl`](models/ASMB.stl)), CAD master ([`ASMB.step`](models/ASMB.step)) & STLs in [`models/`](models/README.md) |
 
 ---
 

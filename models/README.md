@@ -6,7 +6,8 @@ Files used to produce the physical parts — 3D-printed and machined/cut pieces 
 
 | Model File | Part / Subsystem | Format | File Size | Description |
 |---|---|---|---|---|
-| [`Front Bumper.step`](Front%20Bumper.step) | Front Bumper & Sensor Assembly | STEP AP214 | ~61.8 MB | Master CAD assembly for front crash protection, ToF sensor mounting & chassis interface |
+| [`ASMB.stl`](ASMB.stl) | Full Assembled Robot (Interactive 3D Preview) | STL (Binary) | ~10.3 MB | Complete assembled vehicle — **click to view in 3D directly on GitHub** |
+| [`ASMB.step`](ASMB.step) | Master CAD Assembly | STEP AP214 | ~61.8 MB | Parametric engineering CAD assembly for Fusion 360 / SolidWorks |
 | [`Front Bumper.stl`](Front%20Bumper.stl) | Front Bumper | STL (Binary) | ~822 KB | 3D print-ready mesh for front bumper and sensor mount |
 | [`Front Bumper v45.stl`](Front%20Bumper%20v45.stl) | Front Bumper (v45 Revision) | STL (Binary) | ~1.42 MB | Latest revision of front bumper mesh |
 | [`Base Plate.stl`](Base%20Plate.stl) | Main Chassis Baseplate | STL (Binary) | ~1.36 MB | 3D print-ready main vehicle chassis bottom plate |

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Team Blueprint — 3D Robot Assembly Viewer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="viewer.css" />
+  <!-- Three.js and STLLoader -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/STLLoader.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- Top Header HUD -->
+    <header id="hud-header">
+      <div class="brand">
+        <span class="badge-live">3D CAD</span>
+        <h1>TEAM BLUEPRINT — WRO 2026</h1>
+        <span class="tag">Autonomous Vehicle Assembly</span>
+      </div>
+      <div class="quick-stats">
+        <div class="stat-pill"><span class="label">FOOTPRINT</span><span class="value">165 × 114 mm</span></div>
+        <div class="stat-pill"><span class="label">WHEELBASE</span><span class="value">136.14 mm</span></div>
+        <div class="stat-pill"><span class="label">RULE LIMIT</span><span class="value success">≤ 300 × 200 mm</span></div>
+      </div>
+    </header>
+
+    <!-- 3D Canvas Viewport -->
+    <div id="canvas-container">
+      <div id="loading-overlay" class="visible">
+        <div class="spinner"></div>
+        <p id="loading-text">Initializing 3D Engine...</p>
+        <div class="progress-bar"><div id="progress-fill"></div></div>
+      </div>
+      <!-- Dropzone cue -->
+      <div id="dropzone-indicator">
+        <div class="drop-box">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="17 8 12 3 7 8"></polyline>
+            <line x1="12" y1="3" x2="12" y2="15"></line>
+          </svg>
+          <p>Drop your assembly / STL file here to view</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Left Floating Controls Panel -->
+    <aside id="controls-panel">
+      <div class="panel-section">
+        <h3>PART SELECTOR</h3>
+        <p class="section-desc">Select a component to inspect or toggle</p>
+        <div class="select-wrapper">
+          <select id="part-select" title="Choose component to view">
+            <option value="ALL">★ Full Assembly (All Parts)</option>
+            <optgroup label="Chassis & Structure">
+              <option value="Base Plate.stl">Base Plate (Chassis)</option>
+              <option value="Middle Plate.stl">Middle Plate (Avionics Deck)</option>
+              <option value="Connector B22.stl">Structural Connector B22</option>
+            </optgroup>
+            <optgroup label="Aerodynamics & Body">
+              <option value="Front Bumper.stl">Front Bumper</option>
+              <option value="Front Bumper v45.stl">Front Bumper (v45)</option>
+              <option value="Tail .stl">Rear Wing / Spoiler</option>
+            </optgroup>
+            <optgroup label="Steering Kinematics">
+              <option value="Left Stearing Hand.stl">Left Steering Knuckle</option>
+              <option value="Right Stearing Hand.stl">Right Steering Knuckle</option>
+            </optgroup>
+            <optgroup label="Powertrain & Bearings">
+              <option value="LEGO Gear BOX.stl">5:1 Gearbox Housing</option>
+              <option value="LEGO Shaft.stl">Drive Axle Coupler Shaft</option>
+              <option value="Motor Mount.stl">25GA Motor Mount</option>
+              <option value="Left BR.stl">Left Axle Bearing Block</option>
+              <option value="Center BR.stl">Center Bearing Block</option>
+              <option value="Right BR.stl">Right Axle Bearing Block</option>
+              <option value="Right Bearing Mount.stl">Right Bearing Mount</option>
+            </optgroup>
+            <optgroup label="Wheels & Hubs">
+              <option value="Left Front Wheel.stl">Left Front Wheel (46mm)</option>
+              <option value="Right Front Wheel.stl">Right Front Wheel (46mm)</option>
+              <option value="Right Rare Wheel.stl">Right Rear Wheel (50mm)</option>
+              <option value="Left Rare Wheel New.stl">Left Rear Wheel (50mm)</option>
+            </optgroup>
+            <optgroup label="Sensor Mounts">
+              <option value="LiDAR mount.stl">RPLIDAR C1 Mast Mount</option>
+              <option value="Back TOF.stl">Rear Collimated ToF Mount</option>
+            </optgroup>
+          </select>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <h3>INSPECTION MODES</h3>
+        <div class="btn-grid">
+          <button id="btn-wireframe" class="hud-btn" title="Toggle Wireframe">
+            <span class="icon">⬡</span> Wireframe
+          </button>
+          <button id="btn-autorotate" class="hud-btn active" title="Toggle Auto-Rotation">
+            <span class="icon">↻</span> Auto-Rotate
+          </button>
+          <button id="btn-axes" class="hud-btn" title="Toggle XYZ Grid & Axes">
+            <span class="icon">✛</span> Grid / Axes
+          </button>
+          <button id="btn-reset-view" class="hud-btn" title="Reset Camera">
+            <span class="icon">⊙</span> Reset View
+          </button>
+        </div>
+      </div>
+
+      <div class="panel-section" id="explode-section">
+        <div class="slider-header">
+          <h3>EXPLODED VIEW</h3>
+          <span id="explode-val">0%</span>
+        </div>
+        <input type="range" id="explode-slider" min="0" max="100" value="0" />
+      </div>
+
+      <div class="panel-section">
+        <h3>APPEARANCE PRESETS</h3>
+        <div class="palette-picker">
+          <button class="color-btn active" data-color="default" title="Authentic Competition Colors">
+            <span class="dot red-dot"></span> Team Red
+          </button>
+          <button class="color-btn" data-color="stealth" title="Stealth Matte Black">
+            <span class="dot black-dot"></span> Stealth
+          </button>
+          <button class="color-btn" data-color="blueprint" title="CAD Blueprint Blue">
+            <span class="dot blue-dot"></span> Blueprint
+          </button>
+          <button class="color-btn" data-color="clay" title="Studio Clay">
+            <span class="dot clay-dot"></span> Clay
+          </button>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <h3>UPLOAD ASMB / STL</h3>
+        <p class="section-desc">Drag & drop or select an assembly or STL file from your PC</p>
+        <label for="file-input" class="file-upload-btn">
+          <span>📁 Browse 3D File...</span>
+          <input type="file" id="file-input" accept=".stl,.obj" multiple />
+        </label>
+      </div>
+    </aside>
+
+    <!-- Bottom Controls & Hints -->
+    <footer id="hud-footer">
+      <div class="control-hints">
+        <span><kbd>Left Click + Drag</kbd> Rotate</span>
+        <span><kbd>Right Click + Drag</kbd> Pan</span>
+        <span><kbd>Scroll</kbd> Zoom</span>
+      </div>
+      <div class="meta-info">
+        <span id="tris-count">0 Triangles</span> · <span id="parts-loaded">0 Parts Loaded</span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="viewer.js"></script>
+</body>
+</html>
