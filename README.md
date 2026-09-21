@@ -108,7 +108,7 @@ Autonomous miniature racing in the WRO Future Engineers category requires solvin
 * **Optical Noise**: High-reflectance white vinyl mats against low-reflectance matte black walls produce severe infrared crosstalk for distance sensors.
 * **Randomized Racing Direction**: Track direction (clockwise vs. counter-clockwise) is drawn randomly before each round and must be detected dynamically.
 * **Dynamic Obstacle Avoidance**: Detecting and evading randomized traffic pillars (green = pass left, red = pass right) at speed while preserving track boundaries.
-* **Micro-Bay Parking**: Maneuvering into a bay only $1.5 \times$ the vehicle's length ($247.5\text{ mm}$ for our $165\text{ mm}$ chassis) without touching boundary limiters.
+* **Micro-Bay Parking**: Maneuvering into a bay only $1.5 \times$ the vehicle's length ($275.25\text{ mm}$ for our $183.5\text{ mm}$ chassis baseplate / $411.4\text{ mm}$ total envelope) without touching boundary limiters.
 
 ---
 
@@ -183,14 +183,15 @@ Autonomous miniature racing in the WRO Future Engineers category requires solvin
 
 | Category | Parameter | Measured / Engineered Value | WRO Limit | Technical Design Notes |
 |:---|:---|:---:|:---:|:---|
-| **Footprint** | Scored Dimensions | **165 × 114.2 mm** | $\le 300 \times 200\text{ mm}$ | Compact chassis maximizing parking clearance |
-| | Vehicle Height | **50 mm** (Open) / **~90 mm** (Obstacle) | $\le 300\text{ mm}$ | Low centre of gravity; modular perception mast |
+| **Footprint** | Scored Dimensions | **274.29 × 114.09 mm** (Full) / **183.5 × 101.7 mm** (Base) | $\le 300 \times 200\text{ mm}$ | Fully rule-compliant with 25.7 mm length & 85.9 mm width safety margins |
+| | Vehicle Height | **169.19 mm** (To spoiler) / **104.6 mm** (Mid-deck) | $\le 300\text{ mm}$ | Well below the 300 mm rule ceiling; modular perception mast |
 | | Total Mass | **~420 g** (Open) / **~540–580 g** (Obstacle, estimated) | $\le 1500\text{ g}$ | See mass budget in [`BOM.md`](BOM.md) |
-| **Kinematics** | Wheelbase ($L$) | **136.14 mm** | — | Measured in CAD (136.139 mm axle-to-axle); $R = 194.4\text{ mm}$ |
-| | Track Width ($W$) | **105 mm** (centre) / **114.24 mm** (extreme) | — | Kingpin span $80.59\text{ mm}$ |
+| **Kinematics** | Wheelbase ($L$) | **136.07 mm** | — | Measured in CAD (136.07 mm axle-to-axle); $R = 194.3\text{ mm}$ |
+| | Track Width ($W$) | **102.09 mm** (Front centre) / **114.09 mm** (Extreme) | — | Rear track: 84.84 mm centre / 113.59 mm extreme |
 | | Steering Mechanism | **Ackermann linkage** | 1 actuator | $107.0^\circ / 73.0^\circ$ arms ($17.0^\circ$) aimed at the rear axle centre |
 | | Steering Lock Range | **$\pm 35^\circ$** at knuckles | — | Actuated by JX PS-1171MG digital metal-gear servo |
-| | Minimum Turn Radius | **194.4 mm** ($L / \tan 35^\circ$) | — | Well inside the $1000\text{ mm}$ corridor |
+| | Minimum Turn Radius | **194.3 mm** ($L / \tan 35^\circ$) | — | Well inside the $1000\text{ mm}$ track corridor |
+| | Ground Clearance | **6.02 mm** | — | Measured from ground contact plane to lowest chassis baseplate point |
 | **Powertrain** | Drive Motor | **25GA-370 DC Gearmotor** (12V) | 1 motor | One drive motor, rule-compliant |
 | | Gear Reduction | **5:1 Spur Gear Drive** | — | Theoretical top speed $0.70\text{ m/s}$ |
 | | Drive Axle | **Solid Steel Rear Axle** (No differential) | 1 driven axle | Unbiased straight odometry; no diff backlash |

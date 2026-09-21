@@ -48,28 +48,32 @@ see Decisions #23–#28.
 > optimizer output in `src/sim/optimize_layout.py` is retained as a study, not a spec.
 > Divergence rationale: `journal/day-02-plan-revision-2026-07-26.md`, Decision #4 block.
 
-| Parameter | As built | Note |
+| Parameter | As built (CAD Verified) | Note |
 |---|---|---|
-| Track (wheel centre to centre) | **105 mm** | |
-| Track (wheel extreme to extreme) | **114.24 mm** | CAD measured: 114.244 mm (scored width) |
+| Track (Front wheel centre to centre) | **102.09 mm** | Distance between front tire contact patches |
+| Track (Front extreme outer) | **114.09 mm** | CAD measured: 114.09 mm across outer tire sidewalls (scored width) |
+| Track (Rear wheel centre to centre) | **84.84 mm** | Rear driven axle wheel centers |
+| Track (Rear extreme outer) | **113.59 mm** | Outermost edge of rear driven hubs |
 | Kingpin pivot span ($K_w$) | **80.59 mm** | CAD measured: 80.589 mm between knuckle pivots |
-| Body length | **165 mm** | scored length = projection on mat (Appendix A 2/6) |
-| Chassis plate | 80 x 130 mm | |
-| **Wheelbase (front axle to rear axle)** | **136.14 mm** | CAD measured: 136.139 mm axle-to-axle, 136.126 mm rim-to-rim |
-| Front wheel dia | **46 mm** | |
-| Rear wheel dia | **50 mm** | drives odometry |
+| **Overall Length (Bumper to Spoiler)** | **274.29 mm** | Front bumper leading edge to rear spoiler trailing tip ($\le 300\text{ mm}$) |
+| **Chassis Baseplate Length** | **183.5 mm** | Main bottom structural plate length ($\times 101.7\text{ mm}$ width) |
+| Avionics Mid-Deck Plate | **211.0 × 102.4 mm** | Upper electronics and sensor deck |
+| **Wheelbase (front axle to rear axle)** | **136.07 mm** | CAD measured: 136.07 mm axle-to-axle |
+| Front wheel dia | **48.0 mm** | Outer diameter including tire tread |
+| Rear wheel dia | **48.0 mm** | Outer diameter including tire tread (drives odometry) |
+| Ground Clearance | **6.02 mm** | Measured from ground contact plane to lowest chassis baseplate point |
+| Front Overhang | **61.46 mm** | Front axle centre to frontmost bumper leading edge |
+| Rear Overhang | **76.77 mm** | Rear axle centre to rearmost tip of spoiler |
 | Steering mechanism | **Ackermann** | arms angled at 107.0° / 73.0° (17.0° inclination) |
 | Steering lock | **+/-35 deg** | measured at knuckles. **Final.** |
-| **Turn radius R** | **194.4 mm** | 136.14 / tan 35 deg |
-| Car height (current) | **50 mm** | will grow to ~75-90 mm with Pi 5 + RPLIDAR C1 stack |
+| **Turn radius R** | **194.3 mm** | 136.07 / tan 35 deg |
+| Total Car Height | **169.19 mm** | Measured to highest tip of rear wing ($\le 300\text{ mm}$) |
+| Cabin / Deck Height | **104.61 mm** | Ground plane to top surface of middle avionics enclosure |
 | Rear axle | solid, no diff, **5:1 gear** | Decision #14 |
 
-**Scored footprint 165 x 114.2 mm** — well inside the 300 x 200 mm limit.
+**Scored footprint 274.29 × 114.09 mm (Height: 169.19 mm)** — well inside the WRO 300 × 200 × 300 mm rule ceiling.
 
-> ⚠️ **Open inconsistency:** a 136.14 mm wheelbase with 46/50 mm wheels needs at least
-> 136.14 + 23 + 25 ≈ 184 mm of length, more than the 165 mm body length. `src/sim/park_feasibility.py`
-> therefore rejects `--wheelbase 136.14`. Either the wheels overhang the scored body length or one
-> of the figures is wrong — re-measure and record which.
+> **Consistency Resolution (2026-09-22 CAD Audit):** Re-measured from master assembly (`ASMB.3mf` / `ASMB.step`). The structural baseplate is 183.5 mm; total envelope with front bumper and rear spoiler is 274.29 mm. Wheelbase of 136.07 mm with 48 mm wheels fits the 183.5 mm baseplate and 274.29 mm total envelope cleanly with zero interference.
 
 ### Turn radius & Kinematics — CAD VERIFIED (2026-09-15)
 
