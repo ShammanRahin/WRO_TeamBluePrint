@@ -16,7 +16,7 @@
 [![Compute SBC](https://img.shields.io/badge/Eyes-Raspberry%20Pi%205%20(8GB)-red)](src/pi/)
 [![Design](https://img.shields.io/badge/Method-Evidence%20over%20Vibes-orange)](DECISIONS.md)
 
-**[The Team](#1-the-team)** · **[The Vehicle](#3-the-vehicle)** · **[System Architecture](#4-system-architecture)** · **[How It Thinks](#5-how-the-car-thinks)** · **[Engineering Breakthroughs](#6-key-engineering-findings)** · **[Build & Calibrate](#7-build--fabrication)** · **[Troubleshooting](#9-field-troubleshooting)**
+**[The Team](#1-the-team)** · **[The Vehicle](#3-the-vehicle)** · **[System Architecture](#4-system-architecture)** · **[How It Thinks](#5-how-the-car-thinks)** · **[Engineering Breakthroughs](#6-key-engineering-findings)** · **[Build & Calibrate](#7-build--fabrication)** · **[Troubleshooting](#9-field-troubleshooting)** · **[Sponsors](#15-sponsors--acknowledgements)**
 
 </div>
 
@@ -519,3 +519,31 @@ Developed collaboratively across **Islamic University of Technology (IUT)**, **M
 
 ### License
 This project is open source and available under the **[MIT License](LICENSE)**.
+
+---
+
+## 15. Sponsors & Acknowledgements
+
+<div align="center">
+
+### Special Thanks to Our Official 3D Printing & Prototyping Sponsor
+
+<br/>
+
+<a href="https://www.facebook.com/profile.php?id=61591245009575" target="_blank" rel="noopener noreferrer">
+  <img src="media/sponsors/rapidpcb_logo.jpg" alt="rapidPCB — Official 3D Printing Sponsor" width="280"/>
+</a>
+
+<br/><br/>
+
+<a href="https://www.facebook.com/profile.php?id=61591245009575" target="_blank" rel="noopener noreferrer">
+  <img src="https://img.shields.io/badge/Facebook-rapidPCB-1877F2?style=for-the-badge&logo=facebook&logoColor=white" alt="rapidPCB Facebook Page"/>
+</a>
+
+<br/><br/>
+
+> We extend our deepest gratitude to **[rapidPCB](https://www.facebook.com/profile.php?id=61591245009575)** for generously sponsoring the additive manufacturing and high-precision 3D printing of Team Blueprint’s autonomous racing vehicle. Their rapid fabrication capabilities allowed us to rapidly iterate and produce our lightweight chassis baseplate, avionics mid-deck, Ackermann steering knuckles, sensor mast brackets, and aerodynamic spoiler for the **World Robot Olympiad (WRO) Future Engineers 2026**.
+
+</div>
+
+

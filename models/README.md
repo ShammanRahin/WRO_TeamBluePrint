@@ -68,3 +68,9 @@ Files used to produce the physical parts — 3D-printed and machined/cut pieces 
 | ToF collimator snouts + 2° wedges | Print | 2.5 x 10 x 20 mm slot |
 | Colour sensor hood | Print | Fixed to chassis |
 | Camera / LiDAR mast | Print | ~90 mm, obstacle round |
+
+---
+
+### 3D Printing & Prototyping Sponsor
+Special thanks to **[rapidPCB](https://www.facebook.com/profile.php?id=61591245009575)** for sponsoring the additive manufacturing and precision 3D printing of Team Blueprint’s competition components.
+
