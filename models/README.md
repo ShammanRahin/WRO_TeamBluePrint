@@ -45,6 +45,9 @@ Files used to produce the physical parts — 3D-printed and machined/cut pieces 
 | [`Center BR.stl`](Center%20BR.stl) | Rear Axle Bearing Bracket (Center) | STL (Binary) | ~1.63 MB | 3D print-ready center axle bearing support block |
 | [`Right BR.stl`](Right%20BR.stl) | Rear Axle Bearing Bracket (Right) | STL (Binary) | ~1.62 MB | 3D print-ready right axle bearing support block |
 | [`Right Bearing Mount.stl`](Right%20Bearing%20Mount.stl) | Rear Axle Bearing Mount (Right) | STL (Binary) | ~1.07 MB | 3D print-ready axle bearing housing |
+| [`Top Plate.stl`](Top%20Plate.stl) | Upper Enclosure Roof / Cover Plate | STL (Binary) | ~1.03 MB | 3D print-ready top cabin deck & handle interface |
+| [`Camera Holder ras.stl`](Camera%20Holder%20ras.stl) | Raspberry Pi Camera Mast Mount | STL (Binary) | ~702 KB | 3D print-ready forward perception camera bracket |
+| [`Stearing Holder .stl`](Stearing%20Holder%20.stl) | Steering Servo & Knuckle Mount | STL (Binary) | ~1.88 MB | 3D print-ready Ackermann steering mechanism support block |
 
 ## What belongs here
 
@@ -65,3 +68,9 @@ Files used to produce the physical parts — 3D-printed and machined/cut pieces 
 | ToF collimator snouts + 2° wedges | Print | 2.5 x 10 x 20 mm slot |
 | Colour sensor hood | Print | Fixed to chassis |
 | Camera / LiDAR mast | Print | ~90 mm, obstacle round |
+
+---
+
+### 3D Printing & Prototyping Sponsor
+Special thanks to **[rapidPCB](https://www.facebook.com/profile.php?id=61591245009575)** for sponsoring the additive manufacturing and precision 3D printing of Team Blueprint’s competition components.
+
