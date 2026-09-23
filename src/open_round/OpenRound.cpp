@@ -34,12 +34,20 @@
 // colour gate alone - otherwise the side condition could never be met
 // and the car would drive into the outer wall.
 //
-// STARTUP GATE
-// loop() does nothing but poll Serial until the first well-formed frame
-// arrives from the Pi (see fsmStarted / lidarFrames below). WAIT_START's
-// countdown - and therefore every state after it - cannot begin before
-// that, so the car never starts moving while the Pi's LiDAR script is
-// still coming up or hasn't been launched yet.
+// STARTUP SEQUENCE
+//   1. Boot: onboard LED (PC13) slow-blinks. loop() only polls Serial -
+//      the start button is ignored until the Pi's first well-formed
+//      LiDAR frame arrives.
+//   2. First frame received: onboard LED goes SOLID. The FSM enters
+//      WAIT_START and waits for the start button on PB12.
+//   3. Button pressed (debounced): car starts driving immediately.
+// The button must be seen RELEASED before a press counts, so a button
+// held (or shorted) at power-up can never launch the car.
+//
+// STATUS LED (onboard PC13, active LOW)
+//   slow blink 500 ms  waiting for the Pi's first LiDAR frame
+//   solid              Pi connected, LiDAR live (ready / running / finished)
+//   fast blink 100 ms  LiDAR frames stale (Pi dropped out)
 //
 // BENCH-VERIFIED
 //   motor    PA2 forward, PA3 reverse
@@ -72,10 +80,10 @@ const int IMU_CS_PIN  = PA4;
 const int IMU_INT_PIN = PB0;
 const int IMU_RST_PIN = PB1;
 
-const int LED1_PIN = PB12;        // solid = running; slow blink (500 ms) = waiting for first Pi frame; fast blink (100 ms) = lidar stale mid-run
+const int STATUS_LED_PIN = PC13;  // Black Pill onboard LED, active LOW - see STATUS LED above
 const int LED2_PIN = PB13;        // lit while ORANGE is under the sensor
 const int LED3_PIN = PB14;        // lit while BLUE is under the sensor
-const int BTN_START_PIN = PB15;   // not wired yet - see START_DELAY_MS
+const int BTN_START_PIN = PB12;   // start button to GND, internal pull-up (pressed = LOW)
 
 #define I2C_SCL     PB6
 #define I2C_SDA     PB7
@@ -96,7 +104,7 @@ const float IMU_YAW_SIGN        = 1.0;    // clockwise reads negative
 const int BASE_SPEED     = 70;
 const int CORRECTION_PWM = 55;
 
-const unsigned long START_DELAY_MS = 5000;
+const unsigned long BTN_DEBOUNCE_MS = 30;
 
 SPIClass SPI_IMU(PA7, PA6, PA5);  // MOSI, MISO, SCLK
 Servo steeringServo;
@@ -105,6 +113,28 @@ Adafruit_TCS34725 tcs = Adafruit_TCS34725(TCS34725_INTEGRATIONTIME_2_4MS, TCS347
 
 bool  tcsOk = false;
 float initialYawOffset = 0.0;
+
+// ---- onboard status LED (PC13 sinks current: LOW = on) ----
+void statusLed(bool on) { digitalWrite(STATUS_LED_PIN, on ? LOW : HIGH); }
+void statusBlink(unsigned long periodMs) { statusLed((millis() / periodMs) & 1); }
+
+// ---- start button, non-blocking debounce ----
+// btnStable starts as LOW ("pressed") on purpose: the first debounced
+// edge we can see is therefore a RELEASE, and only the press after that
+// returns true. A button held down at boot cannot start the car.
+bool          btnLastRaw  = LOW;
+bool          btnStable   = LOW;
+unsigned long btnChangeMs = 0;
+
+bool startButtonPressed() {          // true once, on the debounced press edge
+  bool raw = digitalRead(BTN_START_PIN);
+  if (raw != btnLastRaw) { btnLastRaw = raw; btnChangeMs = millis(); }
+  if (raw != btnStable && millis() - btnChangeMs >= BTN_DEBOUNCE_MS) {
+    btnStable = raw;
+    if (btnStable == LOW) return true;
+  }
+  return false;
+}
 
 // ============================================================
 // LiDAR OVER SERIAL   "left,front,right\n"  in mm
@@ -196,7 +226,7 @@ float finalDistanceCm     = FINAL_STRAIGHT_CM;
 // ============================================================
 // FSM DATA
 // ============================================================
-// The FSM (and its WAIT_START countdown) is held off entirely until the
+// The FSM (and its WAIT_START button wait) is held off entirely until the
 // Pi has sent at least one well-formed frame - see the gate at the top
 // of loop(). Everything below still initialises to its normal idle
 // values; it just doesn't get ticked until fsmStarted flips true.
@@ -394,11 +424,11 @@ void initHardware() {
   pinMode(MOT_LPWM_PIN, OUTPUT);
   setMotorSpeed(0);
 
-  pinMode(LED1_PIN, OUTPUT);
+  pinMode(STATUS_LED_PIN, OUTPUT);
   pinMode(LED2_PIN, OUTPUT);
   pinMode(LED3_PIN, OUTPUT);
   pinMode(BTN_START_PIN, INPUT_PULLUP);
-  digitalWrite(LED1_PIN, LOW);
+  statusLed(false);
   digitalWrite(LED2_PIN, LOW);
   digitalWrite(LED3_PIN, LOW);
 
@@ -613,7 +643,7 @@ void recoverStep() {
 }
 
 // ============================================================
-// STATE: WAIT START  (button not wired - fixed 5 s countdown)
+// STATE: WAIT START  (Pi connected - wait for the PB12 button)
 // ============================================================
 void waitStartStep() {
   if (!entered) {
@@ -621,12 +651,10 @@ void waitStartStep() {
     phaseT0 = millis();
     setMotorSpeed(0);
     setServoAngle(SERVO_TRUE_STRAIGHT);
-    Serial.println(F("# WAIT_START 5s"));
+    Serial.println(F("# WAIT_START - press button on PB12"));
   }
-  digitalWrite(LED1_PIN, ((millis() / 250) & 1) ? HIGH : LOW);
 
-  if (millis() - phaseT0 >= START_DELAY_MS) {
-    digitalWrite(LED1_PIN, HIGH);
+  if (startButtonPressed()) {
     lockedColor  = COLOR_NONE;
     cornerCount  = 0;
     colorMuted   = false;
@@ -795,15 +823,15 @@ void loop() {
   // ---- startup gate ----
   // Nothing below this runs until the Pi has sent at least one
   // well-formed frame (lidarFrames > 0). Before that, we just keep
-  // draining Serial and slow-blink LED1 to show we're waiting on the
-  // Pi. This stops WAIT_START's countdown - and every state after it -
-  // from starting while the Pi's LiDAR script isn't up yet.
+  // draining Serial and slow-blink the onboard LED. The start button is
+  // not read here, so it can't launch the car before the Pi is up.
   if (!fsmStarted) {
     if (lidarFrames == 0) {
-      digitalWrite(LED1_PIN, ((millis() / 500) & 1) ? HIGH : LOW);
+      statusBlink(500);
       return;
     }
     fsmStarted = true;
+    statusLed(true);
     Serial.println(F("# first LiDAR frame received - FSM starting"));
   }
 
@@ -824,10 +852,11 @@ void loop() {
     enterRecovery();
   }
 
-  // LED1: solid while running, blinking fast if the LiDAR feed is dead.
-  if (currentState != STATE_WAIT_START && currentState != STATE_FINISHED) {
-    digitalWrite(LED1_PIN, lidarStale ? (((millis() / 100) & 1) ? HIGH : LOW) : HIGH);
-  }
+  // Onboard LED: solid while the Pi is feeding frames (ready or running),
+  // fast blink if the feed goes stale. Always solid once FINISHED.
+  if (currentState == STATE_FINISHED) statusLed(true);
+  else if (lidarStale)                statusBlink(100);
+  else                                statusLed(true);
 
   switch (currentState) {
     case STATE_WAIT_START:      waitStartStep();     break;
@@ -842,7 +871,7 @@ void loop() {
         Serial.println(F("# FINISHED"));
         setMotorSpeed(0);
         setServoAngle(SERVO_TRUE_STRAIGHT);
-        digitalWrite(LED1_PIN, HIGH);
+        statusLed(true);
         digitalWrite(LED2_PIN, HIGH);
         digitalWrite(LED3_PIN, HIGH);
       }
