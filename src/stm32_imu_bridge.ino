@@ -17,7 +17,7 @@
 //                 IMU_YAW_SIGN = -1 ("clockwise reads negative").
 //
 // Nothing else goes over USB: no '#' debug lines (decision #49). Status is
-// shown on LED1 only.
+// shown on the Black Pill's on-board LED (PC13) only (decision #51).
 //
 // The robot does NOT drive under this firmware: the motor is held off and
 // the steering servo is held straight. Push or place the robot by hand.
@@ -29,15 +29,15 @@
 //             CS PA4, INT PB0, RST PB1, 3 MHz
 //   motor     PA2 forward, PA3 reverse      -> held LOW (off)
 //   servo     PA8, 500-2500 us, straight 76.5 -> held straight
-//   LED1      PB12  status (see below)
-//   LED2/3    PB13 / PB14  off
+//   status    PC13  on-board LED, lit when the pin is LOW (see below)
+//   LED1/2/3  PB12 / PB13 / PB14  held off
 //   USB       PA11 / PA12 (native USB FS)
 //   unused    PB6/PB7 (I2C colour sensor), PB8 (TCA reset), PB15 (button)
 //             are left untouched.
 //   NOTE: the Black Pill's on-board KEY button is also wired to PA0
 //         (encoder channel A). Don't press it while running.
 //
-// LED1 (PB12)
+// STATUS LED (on-board, PC13)
 //   solid          streaming: IMU reports arriving, lines going out
 //   slow (500 ms)  IMU fine, but lines can't go out (Pi not connected /
 //                  not reading)
@@ -65,6 +65,7 @@ const int IMU_RST_PIN  = PB1;
 const int LED1_PIN     = PB12;
 const int LED2_PIN     = PB13;
 const int LED3_PIN     = PB14;
+const int STATUS_LED_PIN = PC13;             // on-board LED, active LOW
 
 // ---- servo (from the open-round sketch) ----
 const int   SERVO_MIN_PULSE_US  = 500;
@@ -171,7 +172,7 @@ void updateLed() {
   if (!imuHealthy())                   on = (now / 100) & 1;   // fast: IMU fault
   else if (now - lastSentMs > HOST_OK_MS) on = (now / 500) & 1; // slow: no host
   else                                 on = true;              // solid: streaming
-  digitalWrite(LED1_PIN, on ? HIGH : LOW);
+  digitalWrite(STATUS_LED_PIN, on ? LOW : HIGH);   // active LOW
 }
 
 void setup() {
@@ -181,6 +182,7 @@ void setup() {
   pinMode(LED1_PIN, OUTPUT);      digitalWrite(LED1_PIN, LOW);
   pinMode(LED2_PIN, OUTPUT);      digitalWrite(LED2_PIN, LOW);
   pinMode(LED3_PIN, OUTPUT);      digitalWrite(LED3_PIN, LOW);
+  pinMode(STATUS_LED_PIN, OUTPUT); digitalWrite(STATUS_LED_PIN, HIGH);   // off
   steeringServo.attach(SERVO_PIN, SERVO_MIN_PULSE_US, SERVO_MAX_PULSE_US);
   steeringServo.writeMicroseconds(
       (int)((SERVO_TRUE_STRAIGHT / 180.0f) * (SERVO_MAX_PULSE_US - SERVO_MIN_PULSE_US)) + SERVO_MIN_PULSE_US);
