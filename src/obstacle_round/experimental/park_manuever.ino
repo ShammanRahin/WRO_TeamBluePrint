@@ -107,12 +107,17 @@ const int      DECIDE_REVS      = 5;      // LiDAR revolutions sampled to pick t
 const unsigned long TOF_STALE_MS = 150;   // no new ToF sample this long = blind
 // shuffle legs run on SPEED (encoder), not a fixed PWM, so they stop the same on any battery:
 const float    LEG_VMIN_MMPS    = 60.0;   // speed right next to a wall
-const float    LEG_VMAX_MMPS    = 250.0;  // speed with room
+const float    LEG_VMAX_MMPS    = 180.0;  // speed with room
 const float    LEG_V_PER_MM     = 3.0;    // target speed = this x mm of room left (clamped to the above)
 const int      LEG_PWM_START    = 35;     // PWM a leg starts from (just under what moves the car)
 const int      LEG_PWM_MAX      = 110;
 const float    LEG_KI           = 0.04;   // PWM added per 20 ms per mm/s of speed error
-const float    BRAKE_S          = 0.08;   // stop early by speed x this (coast + ToF sample age), seconds
+const float    BRAKE_S          = 0.15;   // stop early by speed x this (coast + ToF sample age), seconds.
+                                          // Only the START value: after every stop the car measures how far
+                                          // it really coasted and learns it (gBrakeS, up to BRAKE_MAX_S)
+const float    BRAKE_MAX_S      = 0.40;
+const unsigned long IMU_DEAD_MS = 300;    // no heading update this long = IMU dead: never move
+float gBrakeS = BRAKE_S;                  // learned: seconds of coast per mm/s at the stop
 
 // ---- car + lot geometry (the body model that guards the CORNERS the ToFs cannot see) ----
 const float CAR_LEN_MM        = 210.0;    // bumper to bumper
@@ -271,10 +276,10 @@ bool rearBlind()  { return !rearOk  || millis() - rearMs  > TOF_STALE_MS; }
 // Front distance, bumper to obstacle: the front ToF, else the LiDAR front.
 // false only when BOTH are down. brakeS = how early to stop at the current speed.
 bool frontDist(uint16_t &mm, float &brakeS, bool &fromLidar) {
-  brakeS = BRAKE_S; fromLidar = false;
+  brakeS = gBrakeS; fromLidar = false;
   if (!frontBlind()) { mm = frontMm; return true; }
   if (lidarStale())  { mm = TOF_FAR; return false; }
-  fromLidar = true; brakeS = BRAKE_S + LIDAR_EXTRA_BRAKE_S;
+  fromLidar = true; brakeS = gBrakeS + LIDAR_EXTRA_BRAKE_S;
   mm = lidarF >= LIDAR_FAR ? TOF_FAR : (uint16_t)fmaxf(0.0f, lidarF - LIDAR_TO_FRONT_MM);
   return true;
 }
@@ -298,6 +303,9 @@ void noteSensorModes() {
 
 // ---------------- IMU ----------------
 bool  gImuFresh = false;
+bool  imuOk = false;                      // found at boot
+unsigned long gImuLastMs = 0;             // last heading update
+bool  imuDead() { return !imuOk || millis() - gImuLastMs > IMU_DEAD_MS; }
 float gHeading = 0.0;
 float readYaw() {
   float qI = myIMU.getQuatI(), qJ = myIMU.getQuatJ(), qK = myIMU.getQuatK(), qR = myIMU.getQuatReal();
@@ -308,7 +316,7 @@ void serviceImu() {
   gImuFresh = false;
   if (myIMU.wasReset()) myIMU.enableGameRotationVector();
   if (myIMU.getSensorEvent() && myIMU.getSensorEventID() == SENSOR_REPORTID_GAME_ROTATION_VECTOR) {
-    gImuFresh = true;
+    gImuFresh = true; gImuLastMs = millis();
     gHeading = IMU_YAW_SIGN * (fmod(readYaw() - initialYawOffset + 540.0, 360.0) - 180.0);
   }
 }
@@ -395,7 +403,7 @@ struct Maneuver {
   const char *name;
   float target; int rot; int dir;       // dir: +1 forward leg, -1 reverse leg
   LegPhase phase; unsigned long t0;
-  long legTicks0, stopTicks; float legHeading0;
+  long legTicks0, stopTicks; float legHeading0, stopSpeed;
   int legs, stuck;
   float gLast[NOBS], gTrend[NOBS]; unsigned long gMs;
   float firstCapCm;                     // cap for leg 1 (the REALIGN arc), LEG_CAP_CM after
@@ -409,7 +417,7 @@ float degLeft() { return mv.rot * wrapDeg(mv.target - gHeading); }   // still to
 // still rolls steers the nose into the block), then put them on the next lock.
 void legSwing() {
   setMotorSpeed(0);
-  mv.phase = LEG_SETTLE; mv.t0 = millis(); mv.stopTicks = readEncoder();
+  mv.phase = LEG_SETTLE; mv.t0 = millis(); mv.stopTicks = readEncoder(); mv.stopSpeed = gSpeedMmps;
 }
 void legLock() {
   bool left = legSteersLeft();
@@ -438,9 +446,14 @@ int maneuverStep() {
   }
   if (mv.phase == LEG_SETTLE) {
     if (gSpeedMmps > STOPPED_MMPS && millis() - mv.t0 < 600) return 0;
-    if (mv.legs > 0) {                                   // tune BRAKE_S from this
-      Serial.print(F("#   coasted ")); Serial.print(absEnc(readEncoder() - mv.stopTicks) / TICKS_PER_CM * 10.0f, 0);
-      Serial.println(F(" mm after the stop"));
+    if (mv.legs > 0) {                                   // learn how the car coasts
+      float coastMm = absEnc(readEncoder() - mv.stopTicks) / TICKS_PER_CM * 10.0f;
+      if (mv.stopSpeed > 40.0f) {
+        float t = coastMm / mv.stopSpeed;                // seconds of coast per mm/s
+        gBrakeS = constrain(t > gBrakeS ? t : 0.7f * gBrakeS + 0.3f * t, BRAKE_S, BRAKE_MAX_S);   // up at once, down slowly
+      }
+      Serial.print(F("#   coasted ")); Serial.print(coastMm, 0); Serial.print(F(" mm from "));
+      Serial.print(mv.stopSpeed, 0); Serial.print(F(" mm/s -> brake allowance ")); Serial.print(gBrakeS, 2); Serial.println(F(" s"));
     }
     legLock();
     return 0;
@@ -456,7 +469,7 @@ int maneuverStep() {
   // ---- LEG_MOVE ----
   bool fwd = mv.dir > 0;
   bool blind = false, capBlind = false;
-  uint16_t guard = TOF_FAR; float brakeS = BRAKE_S;
+  uint16_t guard = TOF_FAR; float brakeS = gBrakeS;
   float cap = (mv.legs == 1 ? mv.firstCapCm : LEG_CAP_CM);
   if (fwd)               blind = !frontDist(guard, brakeS);      // front ToF, else the LiDAR front
   else if (!rearBlind()) guard = rearMm;
@@ -476,7 +489,7 @@ int maneuverStep() {
   const __FlashStringHelper *why = NULL;
   if (blind)                     why = F("front ToF AND LiDAR front both down");
   else if (guard < PARK_SAFE_MM + gSpeedMmps * brakeS) why = fwd ? F("front distance") : F("rear ToF");
-  else if (closing && clr < CORNER_MARGIN_MM + 1.4f * gSpeedMmps * BRAKE_S) why = F("body model (corner)");
+  else if (closing && clr < CORNER_MARGIN_MM + 1.4f * gSpeedMmps * gBrakeS) why = F("body model (corner)");
   else if (legCm >= cap)         why = capBlind ? F("half-wheel cap (rear ToF down)") : F("leg cap");
 
   if (why) {
@@ -579,13 +592,27 @@ void setup() {
       }
       delay(10);
     }
+    imuOk = true; gImuLastMs = millis();
     Serial.println(F("# IMU ready"));
   } else {
-    Serial.println(F("# ERROR IMU not found"));
+    Serial.println(F("# ERROR IMU not found - the car will NOT move (no heading)"));
   }
 }
 
 void loopBody();
+
+// every 2 s while idle: is everything alive before you press?
+unsigned long idleMs = 0;
+void idleStatus() {
+  if (millis() - idleMs < 2000) return;
+  idleMs = millis();
+  Serial.print(F("# idle: heading ")); Serial.print(gHeading, 1);
+  Serial.print(imuDead() ? F(" (IMU DEAD)") : F(" (IMU ok)"));
+  Serial.print(F("  ToF F=")); if (frontBlind()) Serial.print(F("--")); else Serial.print(frontMm);
+  Serial.print(F(" R="));      if (rearBlind())  Serial.print(F("--")); else Serial.print(rearMm);
+  Serial.print(F("  LiDAR L=")); Serial.print(lidarL); Serial.print(F(" F=")); Serial.print(lidarF);
+  Serial.print(F(" R=")); Serial.println(lidarR);
+}
 
 // ---- loop timing: something blocking the loop (an I2C / SPI call stuck on
 // its timeout) starves the Pi's serial feed. Report it, once a second.
@@ -652,6 +679,11 @@ void loopBody() {
     }                                                  // READY / DONE / ABORT: the switch starts a run
   }
 
+  // ---- no heading = no idea how far the car has turned: stop ----
+  if ((st == P_DECIDE || st == P_PIVOT || st == P_EXIT || st == P_REALIGN) && imuDead()) {
+    stopCar(F("ABORT: IMU stopped giving heading"), P_ABORT);
+  }
+
   // ---- LED (as OpenRound.ino) ----
   if (st == P_DONE)          statusLed(true);          // solid: done
   else if (st == P_ABORT)    statusBlink(60);          // very fast: aborted (press = try again)
@@ -670,7 +702,11 @@ void loopBody() {
     case P_READY:
     case P_DONE:
     case P_ABORT:
-      if (press) { medN = 0; Serial.println(F("# PARK OUT start")); go(P_DECIDE); }
+      idleStatus();
+      if (press) {
+        if (imuDead()) { Serial.println(F("# NOT starting: IMU has no heading (see '# IMU ready' at boot)")); go(P_ABORT); break; }
+        medN = 0; Serial.println(F("# PARK OUT start")); go(P_DECIDE);
+      }
       break;
 
     case P_DECIDE:                                   // 1. which side is open?
