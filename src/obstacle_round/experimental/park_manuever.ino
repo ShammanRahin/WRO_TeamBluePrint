@@ -307,19 +307,8 @@ bool  imuOk = false;                      // found at boot
 unsigned long gImuLastMs = 0;             // last heading update
 bool  imuDead() { return !imuOk || millis() - gImuLastMs > IMU_DEAD_MS; }
 float gHeading = 0.0;
-float readYaw() {
-  float qI = myIMU.getQuatI(), qJ = myIMU.getQuatJ(), qK = myIMU.getQuatK(), qR = myIMU.getQuatReal();
-  if (qI == 0 && qJ == 0 && qK == 0 && qR == 0) return 0;
-  return atan2(2.0f * (qI * qJ + qR * qK), (qR * qR + qI * qI - qJ * qJ - qK * qK)) * (180.0 / PI);
-}
-void serviceImu() {
-  gImuFresh = false;
-  if (myIMU.wasReset()) myIMU.enableGameRotationVector();
-  if (myIMU.getSensorEvent() && myIMU.getSensorEventID() == SENSOR_REPORTID_GAME_ROTATION_VECTOR) {
-    gImuFresh = true; gImuLastMs = millis();
-    gHeading = IMU_YAW_SIGN * (fmod(readYaw() - initialYawOffset + 540.0, 360.0) - 180.0);
-  }
-}
+float readYaw();
+void  serviceImu();
 
 // leg speed controller: target speed from the room left, PWM integrates the error
 float legPwm = 0; unsigned long legPwmMs = 0;
@@ -546,56 +535,127 @@ void stopCar(const __FlashStringHelper *why, ParkState next) {
   go(next);
 }
 
-void setup() {
-  Serial.begin(115200);
-  pinMode(MOT_RPWM_PIN, OUTPUT); pinMode(MOT_LPWM_PIN, OUTPUT); setMotorSpeed(0);
-  pinMode(STATUS_LED_PIN, OUTPUT); statusLed(false);
-  pinMode(BTN_PIN, INPUT_PULLUP);
-  steeringServo.attach(SERVO_PIN, SERVO_MIN_PULSE_US, SERVO_MAX_PULSE_US);
-  setServoAngle(SERVO_TRUE_STRAIGHT);
+// ============================================================
+// SYSTEM INITIALIZATION - same order and IMU code as OpenRound.cpp
+// (initHardware + zeroYaw), with the two ToFs where the colour sensor was.
+// Everything is set up at boot; the yaw is zeroed here, so heading 0 =
+// the way the car faced at power-on.
+// ============================================================
+uint8_t  imuState = 0;                    // 0 not found, 1 found (waiting for events), 2 heading OK
+uint32_t imuEvents = 0;
+unsigned long imuRetryMs = 0;
 
-  // TIM5 encoder on PA0 / PA1
-  __HAL_RCC_GPIOA_CLK_ENABLE(); __HAL_RCC_TIM5_CLK_ENABLE();
-  GPIO_InitTypeDef g = {0};
-  g.Pin = GPIO_PIN_0 | GPIO_PIN_1; g.Mode = GPIO_MODE_AF_PP; g.Pull = GPIO_PULLUP;
-  g.Speed = GPIO_SPEED_FREQ_HIGH; g.Alternate = GPIO_AF2_TIM5;
-  HAL_GPIO_Init(GPIOA, &g);
-  TIM_Encoder_InitTypeDef enc = {0};
-  static TIM_HandleTypeDef htim5 = {0};
-  htim5.Instance = TIM5; htim5.Init.Prescaler = 0; htim5.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim5.Init.Period = 0xFFFFFFFF;
-  enc.EncoderMode = TIM_ENCODERMODE_TI12;
-  enc.IC1Polarity = TIM_ICPOLARITY_RISING; enc.IC1Selection = TIM_ICSELECTION_DIRECTTI;
-  enc.IC2Polarity = TIM_ICPOLARITY_RISING; enc.IC2Selection = TIM_ICSELECTION_DIRECTTI;
-  HAL_TIM_Encoder_Init(&htim5, &enc);
-  HAL_TIM_Encoder_Start(&htim5, TIM_CHANNEL_ALL);
+void zeroYaw() {                          // OpenRound.cpp zeroYaw(), verbatim
+  Serial.println(F("# zeroing yaw"));
+  unsigned long t = millis();
+  while (millis() - t < 3000) {
+    if (myIMU.wasReset()) myIMU.enableGameRotationVector();
+    if (myIMU.getSensorEvent() && myIMU.getSensorEventID() == SENSOR_REPORTID_GAME_ROTATION_VECTOR) {
+      initialYawOffset = readYaw();
+      gImuLastMs = millis(); imuEvents++; imuState = 2;
+      Serial.print(F("# zero yaw ")); Serial.println(initialYawOffset);
+      return;
+    }
+    delay(10);
+  }
+  Serial.println(F("# ERROR no IMU event to zero"));
+}
 
-  // I2C: mux + both ToF
-  resetTCA();
-  Wire.setSCL(I2C_SCL); Wire.setSDA(I2C_SDA); Wire.begin(); Wire.setClock(400000);
-  delay(100);
-  frontOk = initTof(tofFront, FRONT_TOF_CH);
-  rearOk  = initTof(tofRear,  REAR_TOF_CH);
-  Serial.print(F("# ToF front (CH3) ")); Serial.println(frontOk ? F("READY") : F("FAILED"));
-  Serial.print(F("# ToF rear  (CH4) ")); Serial.println(rearOk  ? F("READY") : F("FAILED"));
-
-  // IMU
+bool initImu() {                          // OpenRound.cpp IMU block, verbatim
   SPI_IMU.begin();
   if (myIMU.beginSPI(IMU_CS_PIN, IMU_INT_PIN, IMU_RST_PIN, 3000000, SPI_IMU)) {
     delay(500);
     myIMU.enableGameRotationVector();
     delay(100);
-    unsigned long t = millis();
-    while (millis() - t < 3000) {
-      if (myIMU.getSensorEvent() && myIMU.getSensorEventID() == SENSOR_REPORTID_GAME_ROTATION_VECTOR) {
-        initialYawOffset = readYaw(); break;
-      }
-      delay(10);
-    }
-    imuOk = true; gImuLastMs = millis();
-    Serial.println(F("# IMU ready"));
-  } else {
-    Serial.println(F("# ERROR IMU not found - the car will NOT move (no heading)"));
+    myIMU.getSensorEvent();
+    imuOk = true; if (imuState < 1) imuState = 1;
+    zeroYaw();
+    gHeading = 0.0;
+    return true;
+  }
+  Serial.println(F("# ERROR IMU not found"));
+  return false;
+}
+
+void initHardware() {
+  pinMode(MOT_RPWM_PIN, OUTPUT);
+  pinMode(MOT_LPWM_PIN, OUTPUT);
+  setMotorSpeed(0);
+
+  pinMode(STATUS_LED_PIN, OUTPUT);
+  pinMode(BTN_PIN, INPUT_PULLUP);
+  statusLed(false);
+
+  steeringServo.attach(SERVO_PIN, SERVO_MIN_PULSE_US, SERVO_MAX_PULSE_US);
+  setServoAngle(SERVO_TRUE_STRAIGHT);
+
+  // ---- TIM5 encoder on PA0 / PA1 (AF2) ----
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_TIM5_CLK_ENABLE();
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+  GPIO_InitStruct.Pin       = GPIO_PIN_0 | GPIO_PIN_1;
+  GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull      = GPIO_PULLUP;
+  GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF2_TIM5;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  static TIM_HandleTypeDef htim5 = {0};
+  htim5.Instance         = TIM5;
+  htim5.Init.Prescaler   = 0;
+  htim5.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim5.Init.Period      = 0xFFFFFFFF;
+  sConfig.EncoderMode  = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity  = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Polarity  = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  HAL_TIM_Encoder_Init(&htim5, &sConfig);
+  HAL_TIM_Encoder_Start(&htim5, TIM_CHANNEL_ALL);
+
+  // ---- I2C + the two ToFs (where OpenRound.cpp starts the colour sensor) ----
+  resetTCA();
+  Wire.setSCL(I2C_SCL);
+  Wire.setSDA(I2C_SDA);
+  Wire.begin();
+  Wire.setClock(400000);
+  delay(100);
+
+  frontOk = initTof(tofFront, FRONT_TOF_CH);
+  rearOk  = initTof(tofRear,  REAR_TOF_CH);
+  Serial.print(F("# ToF front (CH3) ")); Serial.println(frontOk ? F("READY") : F("FAILED"));
+  Serial.print(F("# ToF rear  (CH4) ")); Serial.println(rearOk  ? F("READY") : F("FAILED"));
+
+  // ---- IMU over SPI1 ----
+  initImu();
+}
+
+void setup() {
+  Serial.begin(115200);
+  initHardware();
+}
+
+// While idle, an IMU that gives no heading gets its init re-run every 3 s
+// (a BNO08x that booted slower than the STM32, or reset once).
+void imuWatchdog() {
+  if (!imuDead() || millis() - imuRetryMs < 3000) return;
+  imuRetryMs = millis();
+  Serial.println(F("# IMU gives no heading - re-running its init"));
+  initImu();
+}
+
+float readYaw() {
+  float qI = myIMU.getQuatI(), qJ = myIMU.getQuatJ(), qK = myIMU.getQuatK(), qR = myIMU.getQuatReal();
+  if (qI == 0 && qJ == 0 && qK == 0 && qR == 0) return 0;
+  return atan2(2.0f * (qI * qJ + qR * qK), (qR * qR + qI * qI - qJ * qJ - qK * qK)) * (180.0 / PI);
+}
+void serviceImu() {
+  gImuFresh = false;
+  if (myIMU.wasReset()) myIMU.enableGameRotationVector();
+  if (myIMU.getSensorEvent() && myIMU.getSensorEventID() == SENSOR_REPORTID_GAME_ROTATION_VECTOR) {
+    gImuFresh = true; gImuLastMs = millis(); imuEvents++; imuState = 2;
+    gHeading = IMU_YAW_SIGN * (fmod(readYaw() - initialYawOffset + 540.0, 360.0) - 180.0);
   }
 }
 
@@ -607,7 +667,10 @@ void idleStatus() {
   if (millis() - idleMs < 2000) return;
   idleMs = millis();
   Serial.print(F("# idle: heading ")); Serial.print(gHeading, 1);
-  Serial.print(imuDead() ? F(" (IMU DEAD)") : F(" (IMU ok)"));
+  if (!imuDead())          Serial.print(F(" (IMU ok)"));
+  else if (imuState == 0)  Serial.print(F(" (IMU DEAD: not found at boot)"));
+  else if (imuEvents == 0) Serial.print(F(" (IMU DEAD: found, but no heading ever)"));
+  else                     Serial.print(F(" (IMU DEAD: heading stopped)"));
   Serial.print(F("  ToF F=")); if (frontBlind()) Serial.print(F("--")); else Serial.print(frontMm);
   Serial.print(F(" R="));      if (rearBlind())  Serial.print(F("--")); else Serial.print(rearMm);
   Serial.print(F("  LiDAR L=")); Serial.print(lidarL); Serial.print(F(" F=")); Serial.print(lidarF);
@@ -651,6 +714,7 @@ void loopBody() {
   // ---- startup gate (as OpenRound.ino): nothing runs until the Pi's first frame ----
   if (st == P_WAIT_PI) {
     statusBlink(500);                                  // slow blink: waiting for the Pi
+    imuWatchdog();
     if (lidarFrames > 0) {
       Serial.println(F("# first LiDAR frame received - press the button to park out"));
       go(P_READY);
@@ -703,8 +767,9 @@ void loopBody() {
     case P_DONE:
     case P_ABORT:
       idleStatus();
+      imuWatchdog();
       if (press) {
-        if (imuDead()) { Serial.println(F("# NOT starting: IMU has no heading (see '# IMU ready' at boot)")); go(P_ABORT); break; }
+        if (imuDead()) { Serial.println(F("# NOT starting: IMU has no heading (see the idle line and '# zero yaw' at boot)")); go(P_ABORT); break; }
         medN = 0; Serial.println(F("# PARK OUT start")); go(P_DECIDE);
       }
       break;
