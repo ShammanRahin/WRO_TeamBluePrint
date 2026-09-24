@@ -135,6 +135,12 @@ enum RobotState {
 // a type used in a parameter list must already exist at that point.
 struct Sighting { bool valid; int color; float x, y; };
 
+// A tracked sign (the planner's memory of one pillar). Up here for the same
+// reason: passTargets() / reachFrom() / planBackoff() take one as a parameter.
+struct PillarTrack { bool used; int color; float lat; float along; uint8_t hits; float lastSeen;
+                     float backedMm; bool hug; bool passed;
+                     float predClr; float predRel; float minClr; };   // calibration log (# PASS)
+
 // ============================================================
 // HARDWARE PINS & OBJECTS
 // ============================================================
@@ -624,9 +630,7 @@ bool imuDead() { return !imuOk || millis() - gImuLastMs > IMU_DEAD_MS; }
                                              //   BACKOFF started yawed 20 deg at the outer limit backed
                                              //   the rear corner into the wall)
 
-struct PillarTrack { bool used; int color; float lat; float along; uint8_t hits; float lastSeen;
-                     float backedMm; bool hug; bool passed;
-                     float predClr; float predRel; float minClr; };   // calibration log (# PASS)
+// (struct PillarTrack is declared at the top of the file, next to Sighting)
 const int   MAX_TRACKS = 6;
 const float TRACK_KEEP_BEHIND_MM = 600.0f;  // v9: a passed sign is remembered this far behind, so
                                             //   a BACKOFF that reverses the car back beside it
