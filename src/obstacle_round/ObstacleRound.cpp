@@ -3,14 +3,33 @@
 #include <SPI.h>
 #include <Wire.h>
 #include <SparkFun_BNO08x_Arduino_Library.h>
-#include <Adafruit_TCS34725.h>
+#include <VL53L0X.h>                 // Pololu VL53L0X library (front + rear ToF)
 
 #ifndef DEG_TO_RAD
 #define DEG_TO_RAD 0.017453292519943295
 #endif
 
 // ============================================================
-// OBSTACLE ROUND - NON-BLOCKING FIRMWARE  (v9, param table v8)
+// OBSTACLE ROUND - NON-BLOCKING FIRMWARE  (v10, param table v9)
+//
+// v10 vs v9: PARK OUT merged in (from experimental/park_manuever.ino)
+//   - START now begins in the parking lot: STATE_PARK_OUT pivots the car 90 deg
+//     toward the open side with full-lock shuffles, drives out until the front
+//     reads EXIT_FRONT_MM, reverse-arcs back to the lot heading, and only then
+//     starts the laps - with the lane heading taken from the lot (the car was
+//     parked parallel to the wall, so that heading IS the lane direction).
+//     PARK_OUT_ENABLE = 0 starts the laps at once, as v9 did.
+//   - two VL53L0X ToFs on the mux: FRONT CH3, REAR CH4 (CH4 was the floor
+//     colour sensor, which is gone - it only ever drove LED2/LED3). LED2 / LED3
+//     now light while the front / rear ToF is answering.
+//   - park-out guards: front/rear ToF, a body model (encoder + IMU move the
+//     car's outline past the two lot blocks and the wall - it guards the
+//     corners the ToFs cannot see), speed-controlled legs with learned braking.
+//     Front ToF down -> the LiDAR front stands in; rear ToF down -> every
+//     reverse leg is capped at half a wheel turn.
+//   - START is refused while the IMU gives no heading.
+//   The obstacle driving itself (planner, corners, REACH, final straight) is
+//   unchanged from v9.
 //
 // v9 vs v7
 //   - one sign per frame (the largest blob); fields 15-17 are parsed past
@@ -42,8 +61,8 @@
 //   3     rev                LiDAR revolution counter (debounce on this,
 //                            not on frames - a bearing changes once per rev)
 //   4     color              first sign: 1 red, 0 green, 2 none
-//   5-7   err,area,vseq      camera debug, not used here (field 5 is the
-//                            slot reserved for a rear ToF later)
+//   5-7   err,area,vseq      camera debug, not used here (the rear ToF is
+//                            on this board now, mux CH4 - not in the frame)
 //   8-9   coneL,coneR        perpendicular mm to each wall, 65535 = no fit
 //   10    wallAng            car yaw to the walls, deci-deg, + = left, 32767 = none
 //   11-12 pX,pY              first sign centre, mm, x fwd / y left, 32767 = none
@@ -54,6 +73,7 @@
 // A shorter line still parses: 4 fields = open-round feed (no camera).
 //
 // COMMANDS  S = START (armed or finished only), X = STOP (any state).
+//           START runs PARK OUT first (PARK_OUT_ENABLE), then the laps.
 // BUTTON    PB12 to GND (INPUT_PULLUP). One press does what the page does:
 //           armed or finished -> START, anything else -> STOP. Ignored until
 //           the Pi's first frame; a START with the LiDAR stale is refused.
@@ -69,7 +89,7 @@
 //      never ends, so the side that opens is the inner side - right =
 //      clockwise, left = anticlockwise. After the first corner, odometry
 //      gates it (CORNER_MIN_RUN_MM / CORNER_FALLBACK_RUN_MM).
-//      The floor colour sensor only drives LED2/LED3 now.
+//      (v10: the floor colour sensor is gone; its mux channel is the rear ToF.)
 //   3. TURNING, shaped by the LAST SIGN of the straight:
 //        passed on the OUTER side (CW green / CCW red):
 //          drive straight to front <= TURN_OUTER_FRONT_MM (400), then one
@@ -89,15 +109,14 @@
 //   motor    PA2 forward, PA3 reverse
 //   encoder  TIM5 PA0/PA1, negated so forward counts up
 //   IMU      BNO08x SPI1 ~100 Hz, clockwise = negative yaw
-//   colour   TCS34725 on TCA9548A channel 4 (LEDs only)
-//            white pR 47 / pB 19, orange pR 69 / pB 11, blue pR 36 / pB 27
+//   ToF      VL53L0X x2 on TCA9548A: front CH3, rear CH4, 30 ms budget
+//            (the team tof_test.ino setting; 20 ms read FAR on the front)
 //   servo    500-2500 us, straight 76.5, left stop 20, right stop 140
 //            (below straight steers LEFT)
 //   button   PB12 to GND, internal pull-up (v7). LED1 moved to the Black
 //            Pill's on-board LED, PC13 (active LOW), because PB12 is the button.
 // ============================================================
 
-enum BlockColor { COLOR_NONE, COLOR_ORANGE, COLOR_BLUE };
 
 enum RobotState {
   STATE_WAIT_START,
@@ -106,7 +125,8 @@ enum RobotState {
   STATE_FINAL_STRAIGHT,
   STATE_RECOVER,
   STATE_FINISHED,
-  STATE_BACKOFF              // overlay: reverse until a sign's correct side is reachable
+  STATE_BACKOFF,             // overlay: reverse until a sign's correct side is reachable
+  STATE_PARK_OUT             // v10: out of the parking lot, then the laps
 };
 
 // A sign as the Pi reports it: colour + centre in the car frame (mm from the
@@ -130,8 +150,8 @@ const int LED1_PIN = PC13;        // ON-BOARD LED, active LOW (PB12 is the butto
                                   // slow blink (500 ms) = waiting for Pi; medium blink (250 ms) =
                                   // armed, waiting for START; solid = running; fast blink = lidar stale
 const int BTN_PIN  = PB12;        // start / stop button to GND, internal pull-up: pressed = LOW
-const int LED2_PIN = PB13;        // lit while ORANGE is under the sensor
-const int LED3_PIN = PB14;        // lit while BLUE is under the sensor
+const int LED2_PIN = PB13;        // lit while the FRONT ToF is answering
+const int LED3_PIN = PB14;        // lit while the REAR ToF is answering
 
 // LED1 is the on-board PC13 LED, which lights when the pin is LOW.
 inline void led1(bool on) { digitalWrite(LED1_PIN, on ? LOW : HIGH); }
@@ -140,7 +160,8 @@ inline void led1(bool on) { digitalWrite(LED1_PIN, on ? LOW : HIGH); }
 #define I2C_SDA     PB7
 #define TCA_RST_PIN PB8
 #define TCA_ADDR    0x70
-#define TCS_CH      4             // TCS34725
+const uint8_t FRONT_TOF_CH = 3;   // VL53L0X, front bumper
+const uint8_t REAR_TOF_CH  = 4;   // VL53L0X, rear bumper (was the TCS34725 colour sensor)
 
 // ---- calibration ----
        float TICKS_PER_CM        = 14.853;
@@ -167,10 +188,11 @@ const int   SERVO_MAX_PULSE_US  = 2500;
 SPIClass SPI_IMU(PA7, PA6, PA5);  // MOSI, MISO, SCLK
 Servo steeringServo;
 BNO08x myIMU;
-Adafruit_TCS34725 tcs = Adafruit_TCS34725(TCS34725_INTEGRATIONTIME_2_4MS, TCS34725_GAIN_16X);
+VL53L0X tofFront, tofRear;
 
-bool  tcsOk = false;
 float initialYawOffset = 0.0;
+bool  imuOk = false;                 // v10: beginSPI answered at boot
+unsigned long gImuLastMs = 0;        // v10: last heading update (the park-out never moves blind)
 
 // ============================================================
 // PI LINK
@@ -362,8 +384,6 @@ float         gYawRate  = 0.0;
 float         gPrevH    = 0.0;
 unsigned long gPrevHT   = 0;
 
-// cached colour, refreshed every loop
-BlockColor gRawColor = COLOR_NONE;
 
 // ============================================================
 // HELPERS
@@ -443,41 +463,38 @@ void zeroYaw() {
   Serial.println(F("# ERROR no IMU event to zero"));
 }
 
-// ---- floor colour ----
-void readColor(uint16_t &r, uint16_t &g, uint16_t &b, uint16_t &c) {
-  if (!tcsOk) { r = 0; g = 0; b = 0; c = 0; return; }
-  tcaselect(TCS_CH);
-  Wire.beginTransmission(0x29);
-  Wire.write(0x80 | 0x20 | 0x14);      // command | auto-increment | CDATAL
-  Wire.endTransmission();
-  Wire.requestFrom((uint8_t)0x29, (uint8_t)8);
-  if (Wire.available() < 8) { r = 0; g = 0; b = 0; c = 0; return; }
-  c  = (uint16_t)Wire.read();  c |= (uint16_t)Wire.read() << 8;
-  r  = (uint16_t)Wire.read();  r |= (uint16_t)Wire.read() << 8;
-  g  = (uint16_t)Wire.read();  g |= (uint16_t)Wire.read() << 8;
-  b  = (uint16_t)Wire.read();  b |= (uint16_t)Wire.read() << 8;
-}
+// ---- ToF (v10): VL53L0X front CH3 + rear CH4, read without blocking ----
+// Continuous mode; a new sample is taken only when the sensor flags one
+// ready (the same registers readRangeContinuousMillimeters() polls), so a
+// loop pass never waits on a ToF.
+const uint16_t      TOF_FAR       = 9999;   // internal: no target / not answering
+const unsigned long TOF_STALE_MS  = 150;    // no new sample this long = that ToF is down
+uint16_t      frontMm = TOF_FAR, rearMm = TOF_FAR;
+unsigned long frontMs = 0,       rearMs = 0;
+bool          frontOk = false,   rearOk = false;     // init answered at boot
 
-// Floor colour: diagnostic only (LED2 orange, LED3 blue) - no decision uses it.
-// Chromaticity thresholds sit midway between the measured mat values:
-//   white pR 47 / pB 19, orange pR 69 / pB 11, blue pR 36 / pB 27.
-       float ORANGE_PR_MIN = 58.0;
-       float ORANGE_PB_MAX = 15.0;
-       float BLUE_PB_MIN   = 23.0;
-       float BLUE_PR_MAX   = 41.0;
-       float COLOR_SUM_MIN = 100.0;   // R+G+B below this = too dark to judge
-
-BlockColor classifyColor() {
-  uint16_t r, g, b, c;
-  readColor(r, g, b, c);
-  float total = (float)r + (float)g + (float)b;
-  if (total < COLOR_SUM_MIN) return COLOR_NONE;
-  float pR = (r / total) * 100.0f;
-  float pB = (b / total) * 100.0f;
-  if (pR > ORANGE_PR_MIN && pB < ORANGE_PB_MAX) return COLOR_ORANGE;
-  if (pB > BLUE_PB_MIN   && pR < BLUE_PR_MAX)   return COLOR_BLUE;
-  return COLOR_NONE;
+bool initTof(VL53L0X &s, uint8_t ch) {
+  tcaselect(ch);
+  s.setBus(&Wire);
+  s.setTimeout(100);
+  if (!s.init()) return false;
+  s.setMeasurementTimingBudget(30000);     // ~33 Hz
+  s.startContinuous();
+  return true;
 }
+void pollTof(VL53L0X &s, uint8_t ch, uint16_t &mm, unsigned long &t) {
+  tcaselect(ch);
+  if ((s.readReg(VL53L0X::RESULT_INTERRUPT_STATUS) & 0x07) == 0) return;   // not ready yet
+  uint16_t v = s.readReg16Bit(VL53L0X::RESULT_RANGE_STATUS + 10);
+  s.writeReg(VL53L0X::SYSTEM_INTERRUPT_CLEAR, 0x01);
+  mm = (v == 0 || v >= 8190) ? TOF_FAR : v;       // 8190/8191 = no target
+  t = millis();
+}
+bool frontBlind() { return !frontOk || millis() - frontMs > TOF_STALE_MS; }
+bool rearBlind()  { return !rearOk  || millis() - rearMs  > TOF_STALE_MS; }
+
+const unsigned long IMU_DEAD_MS = 300;    // no heading update this long = no heading
+bool imuDead() { return !imuOk || millis() - gImuLastMs > IMU_DEAD_MS; }
 
 // ============================================================
 // LANE POSITION + SIGN PASS PLANNER
@@ -1138,6 +1155,8 @@ void updateLevel() {
   levelTotalDeg += step;
 }
 
+void pkService();                    // PARK OUT section (v10)
+
 // ---- called once at the top of every loop ----
 void serviceSensors() {
   lidarNewFrame = false;
@@ -1155,15 +1174,18 @@ void serviceSensors() {
     if (dt > 0.0) gYawRate = wrapDeg(h - gPrevH) / dt;
     gPrevH = h; gPrevHT = now;
     gHeading = h;
+    gImuLastMs = now;
   }
 
-  gRawColor = classifyColor();
+  if (frontOk) pollTof(tofFront, FRONT_TOF_CH, frontMm, frontMs);
+  if (rearOk)  pollTof(tofRear,  REAR_TOF_CH,  rearMm,  rearMs);
   if (currentState != STATE_FINISHED) {
-    digitalWrite(LED2_PIN, gRawColor == COLOR_ORANGE ? HIGH : LOW);
-    digitalWrite(LED3_PIN, gRawColor == COLOR_BLUE   ? HIGH : LOW);
+    digitalWrite(LED2_PIN, frontBlind() ? LOW : HIGH);
+    digitalWrite(LED3_PIN, rearBlind()  ? LOW : HIGH);
   }
 
   odoUpdate();
+  pkService();                       // park-out speed + pose (cheap; idle outside PARK_OUT)
   updatePlanner();
   updateLevel();
 }
@@ -1212,7 +1234,7 @@ void initHardware() {
   HAL_TIM_Encoder_Init(&htim5, &sConfig);
   HAL_TIM_Encoder_Start(&htim5, TIM_CHANNEL_ALL);
 
-  // ---- I2C + colour ----
+  // ---- I2C + the two ToFs (v10: where the colour sensor was) ----
   resetTCA();
   Wire.setSCL(I2C_SCL);
   Wire.setSDA(I2C_SDA);
@@ -1220,21 +1242,23 @@ void initHardware() {
   Wire.setClock(400000);
   delay(100);
 
-  tcaselect(TCS_CH);
-  delay(10);
-  tcsOk = tcs.begin();
-  Serial.println(tcsOk ? F("# colour CH4 READY") : F("# colour CH4 FAILED"));
+  frontOk = initTof(tofFront, FRONT_TOF_CH);
+  rearOk  = initTof(tofRear,  REAR_TOF_CH);
+  Serial.println(frontOk ? F("# ToF front CH3 READY") : F("# ToF front CH3 FAILED - park-out uses the LiDAR front"));
+  Serial.println(rearOk  ? F("# ToF rear  CH4 READY") : F("# ToF rear  CH4 FAILED - park-out reverse legs capped"));
 
   // ---- IMU over SPI1 ----
   SPI_IMU.begin();
   if (myIMU.beginSPI(IMU_CS_PIN, IMU_INT_PIN, IMU_RST_PIN, 3000000, SPI_IMU)) {
+    imuOk = true;
     delay(500);
     myIMU.enableGameRotationVector();
     delay(100);
     myIMU.getSensorEvent();
     zeroYaw();
+    gImuLastMs = millis();
   } else {
-    Serial.println(F("# ERROR IMU not found"));
+    Serial.println(F("# ERROR IMU not found - START will be refused"));
   }
 }
 
@@ -1425,6 +1449,433 @@ void backoffStep() {
 }
 
 // ============================================================
+// STATE: PARK OUT  (v10 - from experimental/park_manuever.ino)
+// ============================================================
+// The run starts with the car parked parallel to the outer wall between the
+// two parking-lot blocks (best: at the BACK of the lot, 60+ mm off the wall).
+//   DECIDE   open side = the longer LiDAR side (median of DECIDE_REVS new
+//            revolutions). The ToFs + LiDAR also place the two blocks and
+//            the wall in a small map around the car (the body model).
+//   PIVOT    turn 90 deg toward the open side with FULL-LOCK shuffles:
+//            forward with the wheels toward the open side, reverse with them
+//            away (reversing on the opposite lock keeps rotating the car the
+//            same way), until the IMU says 90 deg.
+//   EXIT     straight out, IMU holding the 90 deg heading, until the front
+//            reads EXIT_FRONT_MM (the inner wall).
+//   REALIGN  one full-lock REVERSE arc back to the lot heading (shuffles if
+//            anything stops it early), then the laps start on that heading.
+// A shuffle leg ends at the first of: the front ToF (forward legs) / rear
+// ToF (reverse legs) under PARK_SAFE_MM, the body model closing on a block
+// (PARK_CORNER_MARGIN_MM) or the wall (PARK_WALL_MARGIN_MM), LEG_CAP_CM.
+// Legs run on encoder SPEED (fast with room, LEG_VMIN_MMPS near a block),
+// the "near" tests add speed x the learned brake time (it measures its own
+// coast after every stop), and the wheels swing to the other lock only once
+// the car has stopped.
+// Fallbacks: front ToF down -> the LiDAR front minus LIDAR_TO_FRONT_MM;
+// rear ToF down -> every reverse leg is at most half a wheel turn.
+// Anything it cannot handle stops the car: PARK OUT ABORT -> FINISHED.
+       bool     PARK_OUT_ENABLE   = true;   // false = START begins the laps at once (v9 behaviour)
+       uint16_t PARK_SAFE_MM      = 25;     // front / rear ToF closer than this ends a leg (the lot is
+                                            //   1.5 x car: ~52 mm spare each end, 50 would never move)
+       uint16_t EXIT_FRONT_MM     = 200;    // EXIT until the front reads this (1000 mm corridor: ~590
+                                            //   mm left behind the car for the reverse arc)
+       float    EXIT_CAP_CM       = 80.0;   // EXIT backstop (front sees nothing)
+       float    PARK_TOL_DEG      = 3.0;    // heading reached within this
+       float    PARK_ACCEPT_DEG   = 8.0;    //   ... or within this if the legs get boxed in
+       float    LEG_CAP_CM        = 35.0;   // no shuffle leg longer than this ...
+       float    ARC_CAP_CM        = 70.0;   //   ... except the REALIGN reverse arc (~41 cm at 260 mm radius)
+       unsigned long PARK_SWING_MS = 250;   // stopped while the wheels swing to the other lock
+       float    LEG_VMIN_MMPS     = 60.0;   // leg speed right next to a block
+       float    LEG_VMAX_MMPS     = 180.0;  // leg speed with room
+       float    LEG_V_PER_MM      = 3.0;    // target speed = this x mm of room left
+       float    LEG_V_PER_DEG     = 15.0;   //   ... and <= this x degrees still to turn
+       int      LEG_PWM_START     = 35;     // PWM a leg starts from (just under what moves the car)
+       int      LEG_PWM_MAX       = 110;
+       float    LEG_KI            = 0.04;   // PWM per 20 ms per mm/s of speed error
+       float    PARK_BRAKE_S      = 0.15;   // stop early by speed x this - the START value; learned
+       float    PARK_BRAKE_MAX_S  = 0.40;   //   upward from each measured coast, up to this
+       float    PARK_CAR_LEN_MM   = 210.0;  // bumper to bumper (the half width is CAR_HALF_W_MM)
+       float    REAR_AXLE_MM      = 60.0;   // rear bumper to the rear axle (the car pivots about it)
+       float    FRONT_TOF_INSET_MM = 0.0;   // how far each ToF sits behind its bumper
+       float    REAR_TOF_INSET_MM  = 0.0;
+       uint16_t TOF_MIN_MM        = 40;     // ToF below this is not trusted: that block = touching
+       float    LOT_DEPTH_MM      = 200.0;  // the lot blocks stick out this far from the outer wall
+       float    PARK_CORNER_MARGIN_MM = 10.0;
+       float    PARK_WALL_MARGIN_MM   = 20.0;  // LiDAR-placed wall: only good to ~+-15 mm
+       float    LIDAR_TO_FRONT_MM = 105.0;  // front ToF down: front = LiDAR front - this. MEASURE it;
+                                            //   too SMALL = the car thinks it has more room than it has
+       float    TICKS_PER_WHEEL_REV = 240.0;// rear ToF down: reverse legs <= half a wheel turn
+       uint16_t OPEN_MIN_MM       = 400;    // DECIDE: the open side must read at least this
+       uint16_t OPEN_MARGIN_MM    = 200;    //   and this much more than the other side
+       uint16_t WALL_SIDE_MAX_MM  = 350;    // one side has no return: the other is the wall below this
+const float    PARK_BLOCK_THICK_MM = 20.0;
+const float    LIDAR_EXTRA_BRAKE_S = 0.10;  // the LiDAR front is 10 Hz: up to 100 ms old
+const float    PARK_STOPPED_MMPS   = 15.0;  // below this the car counts as stopped (before a swing)
+const int      PARK_MAX_LEGS       = 24;    // per turn
+const int      PARK_MAX_STUCK_LEGS = 3;     // legs in a row that turned < 1 deg
+const int      DECIDE_REVS         = 5;
+
+enum ParkPhase { PK_DECIDE, PK_PIVOT, PK_EXIT, PK_REALIGN };
+ParkPhase pkPhase = PK_DECIDE;
+float pkStartHeading = 0.0, pkOutHeading = 0.0;
+int   pkOpenRot = 0;                     // +1 open on the left, -1 on the right
+float pkBrakeS = 0.15;                   // learned brake time
+float pkRearCapCm() { return 0.5f * TICKS_PER_WHEEL_REV / TICKS_PER_CM; }
+
+// ---- |speed| from the encoder over ~40 ms (the park legs' own estimate) ----
+float pkSpeed = 0; long pkSpdTicks0 = 0; unsigned long pkSpdMs0 = 0;
+
+// ---- body model: frame fixed at DECIDE, x along the lot heading, y toward the
+// open side, origin = rear axle at the start. g[0] wall, g[1] front block, g[2] rear.
+const int PK_NOBS = 3;
+float pkX = 0, pkY = 0; long pkPoseTicks = 0; bool pkModelOn = false;
+float pkFaceF = 1e6, pkFaceR = -1e6, pkWallY = -1e6, pkBlockEndY = -1e6;
+
+float pkPsi() { return pkOpenRot * wrapDeg(gHeading - pkStartHeading) * (PI / 180.0f); }
+
+// called from serviceSensors() every loop
+void pkService() {
+  unsigned long now = millis();
+  if (now - pkSpdMs0 >= 40) {
+    long t = readEncoder();
+    pkSpeed = absEnc(t - pkSpdTicks0) / TICKS_PER_CM * 10.0f * 1000.0f / (now - pkSpdMs0);
+    pkSpdTicks0 = t; pkSpdMs0 = now;
+  }
+  long t = readEncoder();
+  float ds = (t - pkPoseTicks) / TICKS_PER_CM * 10.0f;   // mm, + forward
+  pkPoseTicks = t;
+  if (!pkModelOn) return;
+  float psi = pkPsi();
+  pkX += ds * cosf(psi); pkY += ds * sinf(psi);
+}
+
+float pkRectDist(float x, float y, float x0, float x1, float y0, float y1) {   // < 0 inside
+  if (x > x0 && x < x1 && y > y0 && y < y1)
+    return -fminf(fminf(x - x0, x1 - x), fminf(y - y0, y1 - y));
+  float dx = fmaxf(fmaxf(x0 - x, 0), x - x1), dy = fmaxf(fmaxf(y0 - y, 0), y - y1);
+  return sqrtf(dx * dx + dy * dy);
+}
+void pkGaps(float *g) {
+  for (int i = 0; i < PK_NOBS; i++) g[i] = 1e6;
+  if (!pkModelOn) return;
+  float psi = pkPsi(), c = cosf(psi), sn = sinf(psi);
+  const float xf = PARK_CAR_LEN_MM - REAR_AXLE_MM, xr = -REAR_AXLE_MM, w = CAR_HALF_W_MM;
+  for (int e = 0; e < 4; e++) for (int k = 0; k <= 12; k++) {
+    float u = k / 12.0f, bx, by;
+    if (e < 2) { bx = xr + u * (xf - xr); by = e ? w : -w; }
+    else       { bx = e == 2 ? xf : xr;   by = -w + u * 2 * w; }
+    float x = pkX + bx * c - by * sn, y = pkY + bx * sn + by * c;
+    g[0] = fminf(g[0], y - pkWallY - (PARK_WALL_MARGIN_MM - PARK_CORNER_MARGIN_MM));
+    g[1] = fminf(g[1], pkRectDist(x, y, pkFaceF, pkFaceF + PARK_BLOCK_THICK_MM, pkWallY, pkBlockEndY));
+    g[2] = fminf(g[2], pkRectDist(x, y, pkFaceR - PARK_BLOCK_THICK_MM, pkFaceR, pkWallY, pkBlockEndY));
+  }
+}
+void pkPlaceModel(uint16_t closedSideMm, uint16_t fMm, uint16_t rMm, bool frontFromLidar) {
+  pkX = pkY = 0; pkPoseTicks = readEncoder(); pkModelOn = true;
+  float fGap = frontFromLidar ? (float)fMm : (fMm < TOF_MIN_MM ? 0.0f : fMm - FRONT_TOF_INSET_MM);
+  float rGap = rMm < TOF_MIN_MM ? 0.0f : rMm - REAR_TOF_INSET_MM;
+  pkFaceF = fMm < TOF_FAR ? (PARK_CAR_LEN_MM - REAR_AXLE_MM) + fmaxf(fGap, 0.0f) : 1e6;
+  pkFaceR = rMm < TOF_FAR ? -REAR_AXLE_MM - fmaxf(rGap, 0.0f) : -1e6;
+  pkWallY = -(float)closedSideMm;               // the LiDAR sits on the centre line
+  pkBlockEndY = pkWallY + LOT_DEPTH_MM;
+  Serial.print(F("# park model: front block ")); Serial.print(pkFaceF - (PARK_CAR_LEN_MM - REAR_AXLE_MM), 0);
+  Serial.print(F(" mm ahead, rear block ")); Serial.print(-pkFaceR - REAR_AXLE_MM, 0);
+  Serial.print(F(" mm behind, wall ")); Serial.print(closedSideMm - CAR_HALF_W_MM, 0);
+  Serial.println(F(" mm from the side"));
+}
+
+// Front distance, bumper to obstacle: the front ToF, else the LiDAR front.
+// false only when BOTH are down.
+bool pkFrontDist(uint16_t &mm, float &brakeS, bool &fromLidar) {
+  brakeS = pkBrakeS; fromLidar = false;
+  if (!frontBlind()) { mm = frontMm; return true; }
+  if (lidarStale)    { mm = TOF_FAR; return false; }
+  fromLidar = true; brakeS = pkBrakeS + LIDAR_EXTRA_BRAKE_S;
+  mm = lidarF >= LIDAR_FAR ? TOF_FAR : (uint16_t)fmaxf(0.0f, lidarF - LIDAR_TO_FRONT_MM);
+  return true;
+}
+bool pkFrontDist(uint16_t &mm, float &brakeS) { bool l; return pkFrontDist(mm, brakeS, l); }
+
+// leg speed controller: target speed from the room left, PWM integrates the error
+float pkPwm = 0; unsigned long pkPwmMs = 0;
+int pkSpeedPwm(float room, float degToGo) {
+  float vt = fminf(room * LEG_V_PER_MM, degToGo * LEG_V_PER_DEG);
+  vt = constrain(vt, LEG_VMIN_MMPS, LEG_VMAX_MMPS);
+  if (millis() - pkPwmMs >= 20) {
+    pkPwmMs = millis();
+    pkPwm = constrain(pkPwm + LEG_KI * (vt - pkSpeed), 0.0f, (float)LEG_PWM_MAX);
+  }
+  return (int)pkPwm;
+}
+
+// ---- the full-lock multi-point turn ----
+enum PkLeg { PKL_MOVE, PKL_SETTLE, PKL_SWING };
+struct PkManeuver {
+  const char *name;
+  float target; int rot; int dir;        // dir: +1 forward leg, -1 reverse leg
+  PkLeg phase; unsigned long t0;
+  long legTicks0, stopTicks; float legHeading0, stopSpeed;
+  int legs, stuck;
+  float gLast[PK_NOBS], gTrend[PK_NOBS]; unsigned long gMs;
+  float firstCapCm;
+} pkm;
+
+float pkFullLock(bool left) { return left ? SERVO_TRUE_STRAIGHT - SERVO_MAX_LEFT : SERVO_MAX_RIGHT - SERVO_TRUE_STRAIGHT; }
+bool  pkSteersLeft() { return (pkm.rot > 0) == (pkm.dir > 0); }        // fwd+left or rev+right
+float pkDegLeft()    { return pkm.rot * wrapDeg(pkm.target - gHeading); }
+
+void pkLegStop() {                       // stop; the swing waits until the car HAS stopped
+  setMotorSpeed(0);
+  pkm.phase = PKL_SETTLE; pkm.t0 = millis(); pkm.stopTicks = readEncoder(); pkm.stopSpeed = pkSpeed;
+}
+void pkLegLock() {
+  bool left = pkSteersLeft();
+  setServoAngle(left ? SERVO_TRUE_STRAIGHT - pkFullLock(true) : SERVO_TRUE_STRAIGHT + pkFullLock(false));
+  pkm.phase = PKL_SWING; pkm.t0 = millis();
+}
+void pkStartManeuver(const char *name, float target, int rot, int firstDir, float firstCapCm) {
+  pkm.name = name; pkm.target = wrapDeg(target); pkm.rot = rot; pkm.dir = firstDir; pkm.firstCapCm = firstCapCm;
+  pkm.legs = 0; pkm.stuck = 0;
+  Serial.print(F("# ")); Serial.print(name); Serial.print(F(": turn "));
+  Serial.print(rot > 0 ? F("LEFT") : F("RIGHT")); Serial.print(F(" to heading ")); Serial.print(pkm.target, 1);
+  Serial.print(F(" (now ")); Serial.print(gHeading, 1); Serial.print(F("), first leg "));
+  Serial.println(firstDir > 0 ? F("FORWARD") : F("REVERSE"));
+  pkLegStop();
+}
+
+// 0 running, 1 done, -1 failed
+int pkManeuverStep() {
+  float left = pkDegLeft();
+  if (left <= PARK_TOL_DEG) {
+    setMotorSpeed(0);
+    Serial.print(F("# ")); Serial.print(pkm.name); Serial.print(F(" done in ")); Serial.print(pkm.legs);
+    Serial.print(F(" legs, heading ")); Serial.println(gHeading, 1);
+    return 1;
+  }
+  if (pkm.phase == PKL_SETTLE) {
+    if (pkSpeed > PARK_STOPPED_MMPS && millis() - pkm.t0 < 600) return 0;
+    if (pkm.legs > 0) {                                  // learn how the car coasts
+      float coastMm = absEnc(readEncoder() - pkm.stopTicks) / TICKS_PER_CM * 10.0f;
+      if (pkm.stopSpeed > 40.0f) {
+        float t = coastMm / pkm.stopSpeed;
+        pkBrakeS = constrain(t > pkBrakeS ? t : 0.7f * pkBrakeS + 0.3f * t, PARK_BRAKE_S, PARK_BRAKE_MAX_S);
+      }
+      Serial.print(F("#   coasted ")); Serial.print(coastMm, 0); Serial.print(F(" mm from "));
+      Serial.print(pkm.stopSpeed, 0); Serial.print(F(" mm/s -> brake ")); Serial.print(pkBrakeS, 2); Serial.println(F(" s"));
+    }
+    pkLegLock();
+    return 0;
+  }
+  if (pkm.phase == PKL_SWING) {
+    if (millis() - pkm.t0 < PARK_SWING_MS) return 0;
+    pkm.phase = PKL_MOVE; pkm.legTicks0 = readEncoder(); pkm.legHeading0 = gHeading;
+    pkGaps(pkm.gLast); for (int i = 0; i < PK_NOBS; i++) pkm.gTrend[i] = 0; pkm.gMs = millis();
+    pkPwm = LEG_PWM_START; pkPwmMs = millis();
+    pkm.legs++;
+  }
+
+  // ---- PKL_MOVE ----
+  bool fwd = pkm.dir > 0;
+  bool blind = false, capBlind = false;
+  uint16_t guard = TOF_FAR; float brakeS = pkBrakeS;
+  float cap = (pkm.legs == 1 ? pkm.firstCapCm : LEG_CAP_CM);
+  if (fwd)               blind = !pkFrontDist(guard, brakeS);
+  else if (!rearBlind()) guard = rearMm;
+  else { cap = fminf(cap, pkRearCapCm()); capBlind = true; }
+  float legCm = absEnc(readEncoder() - pkm.legTicks0) / TICKS_PER_CM;
+  // body model: the nearest obstacle this leg is moving TOWARD, each tracked on
+  // its own (a block corner can close in while the wall, nearer, opens up)
+  float g[PK_NOBS]; pkGaps(g);
+  bool fresh = millis() - pkm.gMs >= 20;
+  float clr = 1e6;
+  for (int i = 0; i < PK_NOBS; i++) {
+    if (fresh) { pkm.gTrend[i] = g[i] - pkm.gLast[i]; pkm.gLast[i] = g[i]; }
+    if (pkm.gTrend[i] < -0.2f) clr = fminf(clr, g[i]);
+  }
+  if (fresh) pkm.gMs = millis();
+  bool closing = clr < 1e5f;
+  const __FlashStringHelper *why = NULL;
+  if (blind)                                            why = F("front ToF AND LiDAR front both down");
+  else if (guard < PARK_SAFE_MM + pkSpeed * brakeS)     why = fwd ? F("front distance") : F("rear ToF");
+  else if (closing && clr < PARK_CORNER_MARGIN_MM + 1.4f * pkSpeed * pkBrakeS) why = F("body model (corner)");
+  else if (legCm >= cap)                                why = capBlind ? F("half-wheel cap (rear ToF down)") : F("leg cap");
+
+  if (why) {
+    setMotorSpeed(0);
+    float turned = pkm.rot * wrapDeg(gHeading - pkm.legHeading0);
+    Serial.print(F("# ")); Serial.print(pkm.name); Serial.print(F(" leg ")); Serial.print(pkm.legs);
+    Serial.print(fwd ? F(" FWD ") : F(" REV ")); Serial.print(legCm, 1); Serial.print(F(" cm, turned "));
+    Serial.print(turned, 1); Serial.print(F(" deg, heading ")); Serial.print(gHeading, 1);
+    Serial.print(F(", ended: ")); Serial.print(why);
+    if (!blind && guard < TOF_FAR) { Serial.print(fwd ? F(", front ") : F(", rear ")); Serial.print(guard); Serial.print(F(" mm")); }
+    Serial.print(F(", body gap ")); Serial.print(fminf(g[0], fminf(g[1], g[2])), 0); Serial.println(F(" mm"));
+    if (blind) return -1;
+    pkm.stuck = (turned < 1.0f) ? pkm.stuck + 1 : 0;
+    if (pkm.stuck >= PARK_MAX_STUCK_LEGS && pkDegLeft() <= PARK_ACCEPT_DEG) {
+      Serial.print(F("# ")); Serial.print(pkm.name); Serial.print(F(" boxed in but only "));
+      Serial.print(pkDegLeft(), 1); Serial.println(F(" deg off - accepted"));
+      return 1;
+    }
+    if (pkm.stuck >= PARK_MAX_STUCK_LEGS) { Serial.println(F("# boxed in - legs are not turning the car")); return -1; }
+    if (pkm.legs >= PARK_MAX_LEGS)        { Serial.println(F("# too many legs")); return -1; }
+    pkm.dir = -pkm.dir;
+    pkLegStop();
+    return 0;
+  }
+
+  // FULL lock the whole way - forward toward the turn, reverse away from it
+  setServoAngle(pkSteersLeft() ? SERVO_TRUE_STRAIGHT - pkFullLock(true) : SERVO_TRUE_STRAIGHT + pkFullLock(false));
+  float room = fminf((float)guard - PARK_SAFE_MM, closing ? clr - PARK_CORNER_MARGIN_MM : 1e6f);
+  setMotorSpeed(pkm.dir * pkSpeedPwm(room, left - PARK_TOL_DEG));
+  return 0;
+}
+
+// ---- DECIDE helpers ----
+uint16_t pkMedL[DECIDE_REVS], pkMedR[DECIDE_REVS]; uint8_t pkMedN = 0;
+long pkExitTicks0 = 0;
+int8_t pkFrontMode = -1, pkRearMode = -1;
+
+// median of the VALID samples (LIDAR_FAR skipped); LIDAR_FAR if under half are valid
+uint16_t pkMedianValid(uint16_t *v, int n) {
+  uint16_t a[DECIDE_REVS]; int k = 0;
+  for (int i = 0; i < n; i++) if (v[i] < LIDAR_FAR) a[k++] = v[i];
+  if (k * 2 <= n) return LIDAR_FAR;
+  for (int i = 1; i < k; i++) for (int j = i; j > 0 && a[j] < a[j - 1]; j--) { uint16_t t = a[j]; a[j] = a[j - 1]; a[j - 1] = t; }
+  return a[k / 2];
+}
+
+// log whenever a ToF drops out or comes back during the park-out
+void pkNoteSensorModes() {
+  int8_t f = frontBlind() ? 1 : 0, r = rearBlind() ? 1 : 0;
+  if (f != pkFrontMode) {
+    pkFrontMode = f;
+    if (f) { Serial.print(F("# front ToF DOWN - using the LiDAR front minus ")); Serial.print(LIDAR_TO_FRONT_MM, 0); Serial.println(F(" mm")); }
+    else Serial.println(F("# front ToF ok"));
+  }
+  if (r != pkRearMode) {
+    pkRearMode = r;
+    if (r) { Serial.print(F("# rear ToF DOWN - reverse legs capped at ")); Serial.print(pkRearCapCm(), 1); Serial.println(F(" cm (half a wheel turn)")); }
+    else Serial.println(F("# rear ToF ok"));
+  }
+}
+
+void beginLaps(float heading);           // STATE: WAIT START, below
+
+void pkAbort(const __FlashStringHelper *why) {
+  setMotorSpeed(0);
+  setServoAngle(SERVO_TRUE_STRAIGHT);
+  pkModelOn = false;
+  Serial.print(F("# PARK OUT ABORT: ")); Serial.println(why);
+  goState(STATE_FINISHED);
+}
+
+void parkOutStep() {
+  if (!entered) {
+    entered = true;
+    levelEnabled = false;
+    plannerEnabled = false;          // sightings in the lot are not in any lane frame
+    setMotorSpeed(0);
+    setServoAngle(SERVO_TRUE_STRAIGHT);
+    pkPhase = PK_DECIDE; pkMedN = 0; pkModelOn = false;
+    pkBrakeS = PARK_BRAKE_S;
+    pkFrontMode = pkRearMode = -1;
+    Serial.println(F("# PARK OUT start"));
+  }
+  pkNoteSensorModes();
+  if (imuDead()) { pkAbort(F("IMU stopped giving heading")); return; }
+
+  switch (pkPhase) {
+    case PK_DECIDE: {                                // which side is open?
+      if (millis() - lidarLastMs > 1000) { pkAbort(F("no LiDAR frames from the Pi")); return; }
+      if (!lidarNewRev) return;                      // one sample per LiDAR revolution
+      pkMedL[pkMedN] = lidarL; pkMedR[pkMedN] = lidarR;
+      if (++pkMedN < DECIDE_REVS) return;
+      uint16_t L = pkMedianValid(pkMedL, DECIDE_REVS), R = pkMedianValid(pkMedR, DECIDE_REVS);
+      Serial.print(F("# park sides L=")); if (L < LIDAR_FAR) Serial.print(L); else Serial.print(F("none"));
+      Serial.print(F(" R="));             if (R < LIDAR_FAR) Serial.print(R); else Serial.print(F("none"));
+      Serial.print(F("  ToF front=")); Serial.print(frontMm); Serial.print(F(" rear=")); Serial.println(rearMm);
+      uint16_t lo;                                   // distance to the wall side
+      if (L < LIDAR_FAR && R < LIDAR_FAR) {
+        uint16_t hi = max(L, R); lo = min(L, R);
+        if (hi < OPEN_MIN_MM || hi - lo < OPEN_MARGIN_MM) { pkAbort(F("cannot tell which side is open")); return; }
+        pkOpenRot = (L > R) ? 1 : -1;
+      } else if (L < LIDAR_FAR || R < LIDAR_FAR) {   // 65535 on one side is no evidence: the seen side decides
+        uint16_t seen = (L < LIDAR_FAR) ? L : R;
+        int seenRot   = (L < LIDAR_FAR) ? 1 : -1;
+        if (seen <= WALL_SIDE_MAX_MM)  { pkOpenRot = -seenRot; lo = seen; }
+        else if (seen >= OPEN_MIN_MM)  { pkOpenRot =  seenRot; lo = (uint16_t)(CAR_HALF_W_MM + 40);
+          Serial.println(F("# wall side has no LiDAR return - assuming the car is 40 mm off the wall")); }
+        else { pkAbort(F("one LiDAR side has no return, the other is ambiguous")); return; }
+      } else { pkAbort(F("no LiDAR return on either side")); return; }
+      uint16_t fMm; float bS; bool fLidar;
+      if (!pkFrontDist(fMm, bS, fLidar)) { pkAbort(F("front ToF and LiDAR front both down")); return; }
+      uint16_t rMm = rearBlind() ? 0 : rearMm;       // no rear ToF: rear block assumed at the bumper
+      if (fMm < PARK_SAFE_MM + 5 && rMm < PARK_SAFE_MM + 5) { pkAbort(F("no room to move (lower PARK_SAFE_MM?)")); return; }
+      pkStartHeading = gHeading;
+      pkPlaceModel(lo, fMm, rMm, fLidar);
+      if (rMm > 40 || lo - CAR_HALF_W_MM < 60)
+        Serial.println(F("# tip: park at the BACK of the lot and 60+ mm off the wall - most room to turn"));
+      pkOutHeading = wrapDeg(pkStartHeading + 90.0f * pkOpenRot);
+      Serial.print(F("# park open side: ")); Serial.println(pkOpenRot > 0 ? F("LEFT") : F("RIGHT"));
+      pkStartManeuver("PIVOT", pkOutHeading, pkOpenRot, +1, LEG_CAP_CM);
+      pkPhase = PK_PIVOT;
+      return;
+    }
+
+    case PK_PIVOT: {
+      int r = pkManeuverStep();
+      if (r < 0) { pkAbort(F("PIVOT")); return; }
+      if (r > 0) {
+        pkExitTicks0 = readEncoder();
+        setServoAngle(SERVO_TRUE_STRAIGHT);
+        pkPwm = LEG_PWM_START; pkPwmMs = millis();
+        Serial.print(F("# EXIT: forward until the front reads ")); Serial.print(EXIT_FRONT_MM); Serial.println(F(" mm"));
+        pkPhase = PK_EXIT;
+      }
+      return;
+    }
+
+    case PK_EXIT: {                                  // straight out, heading hold
+      float outCm = absEnc(readEncoder() - pkExitTicks0) / TICKS_PER_CM;
+      uint16_t fMm; float bS;
+      if (!pkFrontDist(fMm, bS)) { pkAbort(F("front ToF and LiDAR front both down in EXIT")); return; }
+      bool atWall = fMm < TOF_FAR && fMm <= EXIT_FRONT_MM + pkSpeed * bS;
+      if (atWall || outCm >= EXIT_CAP_CM) {
+        setMotorSpeed(0);
+        Serial.print(F("# EXIT ended: "));
+        Serial.print(atWall ? F("front at the inner wall") : F("distance cap (front saw nothing)"));
+        Serial.print(F(" front=")); Serial.print(fMm);
+        Serial.print(F(" out cm=")); Serial.println(outCm, 1);
+        pkStartManeuver("REALIGN", pkStartHeading, -pkOpenRot, -1, ARC_CAP_CM);   // one full-lock reverse arc
+        pkPhase = PK_REALIGN;
+        return;
+      }
+      if (gImuFresh) {
+        float err = wrapDeg(pkOutHeading - gHeading);            // + = nose must go left
+        setServoAngle(SERVO_TRUE_STRAIGHT - constrain(2.0f * err, -30.0f, 30.0f));
+      }
+      float room = fMm < TOF_FAR ? (float)fMm - EXIT_FRONT_MM : 1e6f;
+      setMotorSpeed(pkSpeedPwm(room, 1e6f));
+      return;
+    }
+
+    case PK_REALIGN: {
+      int r = pkManeuverStep();
+      if (r < 0) { pkAbort(F("REALIGN")); return; }
+      if (r > 0) {
+        setMotorSpeed(0);
+        setServoAngle(SERVO_TRUE_STRAIGHT);
+        pkModelOn = false;
+        Serial.print(F("# PARK OUT DONE, heading ")); Serial.print(gHeading, 1);
+        Serial.print(F(" (lot ")); Serial.print(pkStartHeading, 1); Serial.println(F(") - laps start"));
+        beginLaps(pkStartHeading);                   // the lot heading IS the lane direction
+      }
+      return;
+    }
+  }
+}
+
+// ============================================================
 // STATE: WAIT START  (armed - waits for START)
 // ============================================================
 void waitStartStep() {
@@ -1440,10 +1891,9 @@ void waitStartStep() {
   if (!startRequested) return;
   startRequested = false;
   if (lidarStale) { Serial.println(F("# START refused: lidar stale")); return; }
+  if (imuDead())  { Serial.println(F("# START refused: IMU has no heading")); return; }
 
   led1(true);
-  digitalWrite(LED2_PIN, LOW);
-  digitalWrite(LED3_PIN, LOW);
   dirLocked        = false;
   clockwiseMode    = true;
   cornerCount      = 0;
@@ -1452,11 +1902,21 @@ void waitStartStep() {
   fullStartStraightCm = 0.0;
   haveFullStraight = false;
   finalDistanceCm  = FINAL_STRAIGHT_CM;
-  laneHeading      = gHeading;
   levelEnabled     = false;
   levelTotalDeg    = 0.0;
   cornerExitCmd    = 0.0;
   laneOffOk        = false;
+  clearTracks();
+  if (PARK_OUT_ENABLE) goState(STATE_PARK_OUT);      // v10: out of the lot first
+  else                 beginLaps(gHeading);          // v9: laps from where the car stands
+}
+
+// The laps begin: from START (no park-out) or when the park-out is done, with
+// the heading the first straight is driven on.
+void beginLaps(float heading) {
+  laneHeading = heading;
+  levelEnabled = false;
+  laneOffOk    = false;
   clearTracks();
   zeroEncoder();                     // zero FIRST, then take the lane origin from it
   resetLaneAlong();
@@ -1818,7 +2278,7 @@ void finalStraightStep() {
 // Derived values (PASS_CLEAR_MM, LANE_LIMIT_MM, TICKS_PER_MM) are recomputed
 // on every set, so arrival order never matters.
 
-const uint16_t PARAM_VERSION        = 8;     // bump when ids are added/removed
+const uint16_t PARAM_VERSION        = 9;     // bump when ids are added/removed (v10 firmware: 9)
 const uint8_t  PARAM_DUMP_PER_LOOP  = 2;
 const uint16_t PARAM_TX_HEADROOM    = 96;    // bytes free before a dump line
 
@@ -1826,7 +2286,8 @@ enum PType : uint8_t { PT_F, PT_I, PT_U32, PT_U16, PT_U8, PT_B };
 
 // groups, purely for how the Pi page lays the table out
 enum PGroup : uint8_t {
-  G_DRIVE, G_TURN, G_PLAN, G_PASS, G_LEVEL, G_BACK, G_CORNER, G_SAFE, G_LINK
+  G_DRIVE, G_TURN, G_PLAN, G_PASS, G_LEVEL, G_BACK, G_CORNER, G_SAFE, G_LINK,
+  G_PARK                              // v10 - the Pi page shows it as "Park out"
 };
 
 struct ParamDesc {
@@ -1958,11 +2419,40 @@ const ParamDesc PARAMS[] = {
   // ---- link / sensors ----
   PL(LIDAR_STALE_MS,        G_LINK,   20,  2000),
   PS(LIDAR_MAX_VALID_MM,    G_LINK,  500,  9000),
-  PF(ORANGE_PR_MIN,         G_LINK,    0,   100),   // floor colour: LEDs only
-  PF(ORANGE_PB_MAX,         G_LINK,    0,   100),
-  PF(BLUE_PB_MIN,           G_LINK,    0,   100),
-  PF(BLUE_PR_MAX,           G_LINK,    0,   100),
-  PF(COLOR_SUM_MIN,         G_LINK,    0,  5000),
+  // (v10: the floor-colour thresholds are gone with the colour sensor)
+
+  // ---- park out (v10) ----
+  PB(PARK_OUT_ENABLE,       G_PARK),
+  PS(PARK_SAFE_MM,          G_PARK,    5,   200),
+  PS(EXIT_FRONT_MM,         G_PARK,   50,  1000),
+  PF(EXIT_CAP_CM,           G_PARK,   10,   200),
+  PF(PARK_TOL_DEG,          G_PARK,  0.5,    15),
+  PF(PARK_ACCEPT_DEG,       G_PARK,    1,    30),
+  PF(LEG_CAP_CM,            G_PARK,    3,   100),
+  PF(ARC_CAP_CM,            G_PARK,   10,   150),
+  PL(PARK_SWING_MS,         G_PARK,   50,  2000),
+  PF(LEG_VMIN_MMPS,         G_PARK,   20,   500),
+  PF(LEG_VMAX_MMPS,         G_PARK,   40,   800),
+  PF(LEG_V_PER_MM,          G_PARK,  0.5,    20),
+  PF(LEG_V_PER_DEG,         G_PARK,    1,   100),
+  PI_(LEG_PWM_START,        G_PARK,    0,   200),
+  PI_(LEG_PWM_MAX,          G_PARK,   20,   255),
+  PF(LEG_KI,                G_PARK, 0.005,    1),
+  PF(PARK_BRAKE_S,          G_PARK, 0.02,     1),
+  PF(PARK_BRAKE_MAX_S,      G_PARK, 0.05,     2),
+  PF(PARK_CAR_LEN_MM,       G_PARK,  100,   400),
+  PF(REAR_AXLE_MM,          G_PARK,    0,   300),
+  PF(FRONT_TOF_INSET_MM,    G_PARK,  -50,   100),
+  PF(REAR_TOF_INSET_MM,     G_PARK,  -50,   100),
+  PS(TOF_MIN_MM,            G_PARK,    0,   200),
+  PF(LOT_DEPTH_MM,          G_PARK,   50,   400),
+  PF(PARK_CORNER_MARGIN_MM, G_PARK,    0,   100),
+  PF(PARK_WALL_MARGIN_MM,   G_PARK,    0,   100),
+  PF(LIDAR_TO_FRONT_MM,     G_PARK,    0,   300),
+  PF(TICKS_PER_WHEEL_REV,   G_PARK,   10,  5000),
+  PS(OPEN_MIN_MM,           G_PARK,  100,  3000),
+  PS(OPEN_MARGIN_MM,        G_PARK,    0,  2000),
+  PS(WALL_SIDE_MAX_MM,      G_PARK,   50,  1000),
 };
 const int PARAM_COUNT = (int)(sizeof(PARAMS) / sizeof(PARAMS[0]));
 
@@ -2187,6 +2677,7 @@ void loop() {
     case STATE_FINAL_STRAIGHT:  finalStraightStep(); break;
     case STATE_RECOVER:         recoverStep();       break;
     case STATE_BACKOFF:         backoffStep();       break;
+    case STATE_PARK_OUT:        parkOutStep();       break;
 
     case STATE_FINISHED:
       if (!entered) {
@@ -2198,8 +2689,6 @@ void loop() {
         setMotorSpeed(0);
         setServoAngle(SERVO_TRUE_STRAIGHT);
         led1(true);
-        digitalWrite(LED2_PIN, HIGH);
-        digitalWrite(LED3_PIN, HIGH);
       }
       // START again re-arms and runs a fresh 3 laps
       // (put the car back in the start section first).
