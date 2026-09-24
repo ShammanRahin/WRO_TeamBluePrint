@@ -561,20 +561,64 @@ void zeroYaw() {                          // OpenRound.cpp zeroYaw(), verbatim
   Serial.println(F("# ERROR no IMU event to zero"));
 }
 
-bool initImu() {                          // OpenRound.cpp IMU block, verbatim
+// IMU start-up (the OpenRound.cpp IMU block) with every step printed.
+bool initImu() {
+  Serial.println(F("# ---------- IMU diagnostic ----------"));
+  Serial.println(F("# BNO08x on SPI1: SCK PA5, MISO PA6, MOSI PA7, CS PA4, INT PB0, RST PB1"));
+  pinMode(IMU_INT_PIN, INPUT_PULLUP);
+  Serial.print(F("# INT pin before begin: ")); Serial.println(digitalRead(IMU_INT_PIN) ? F("HIGH") : F("LOW (sensor wants service)"));
+
   SPI_IMU.begin();
-  if (myIMU.beginSPI(IMU_CS_PIN, IMU_INT_PIN, IMU_RST_PIN, 3000000, SPI_IMU)) {
-    delay(500);
-    myIMU.enableGameRotationVector();
-    delay(100);
-    myIMU.getSensorEvent();
-    imuOk = true; if (imuState < 1) imuState = 1;
-    zeroYaw();
-    gHeading = 0.0;
-    return true;
+  unsigned long t = millis();
+  bool found = myIMU.beginSPI(IMU_CS_PIN, IMU_INT_PIN, IMU_RST_PIN, 3000000, SPI_IMU);
+  Serial.print(F("# beginSPI: ")); Serial.print(found ? F("OK") : F("FAILED"));
+  Serial.print(F(" after ")); Serial.print(millis() - t); Serial.println(F(" ms"));
+  if (!found) {
+    Serial.println(F("# ERROR IMU not found - check 3V3 + GND, the 6 SPI/INT/RST wires,"));
+    Serial.println(F("#   and that the board is strapped for SPI (PS0 + PS1 high)"));
+    Serial.println(F("# ------------------------------------"));
+    return false;
   }
-  Serial.println(F("# ERROR IMU not found"));
-  return false;
+  Serial.print(F("# reset reason: ")); Serial.println(myIMU.getResetReason());
+
+  delay(500);
+  bool en = myIMU.enableGameRotationVector();
+  Serial.print(F("# enableGameRotationVector: ")); Serial.println(en ? F("OK") : F("FAILED"));
+  delay(100);
+  myIMU.getSensorEvent();
+
+  // listen for 1 s: what does the sensor actually send?
+  unsigned long t0 = millis();
+  uint16_t nEv = 0, nGrv = 0, nReset = 0; int otherId = -1;
+  while (millis() - t0 < 1000) {
+    if (myIMU.wasReset()) { nReset++; myIMU.enableGameRotationVector(); }
+    if (myIMU.getSensorEvent()) {
+      nEv++;
+      uint8_t id = myIMU.getSensorEventID();
+      if (id == SENSOR_REPORTID_GAME_ROTATION_VECTOR) nGrv++; else otherId = id;
+    }
+  }
+  Serial.print(F("# in 1 s: ")); Serial.print(nEv); Serial.print(F(" events, "));
+  Serial.print(nGrv); Serial.print(F(" game-rotation (want ~100), resets seen "));
+  Serial.print(nReset);
+  if (otherId >= 0) { Serial.print(F(", other report id 0x")); Serial.print(otherId, HEX); }
+  Serial.println();
+  if (nGrv) {
+    Serial.print(F("# quat i/j/k/real: ")); Serial.print(myIMU.getQuatI(), 3); Serial.print(' ');
+    Serial.print(myIMU.getQuatJ(), 3); Serial.print(' '); Serial.print(myIMU.getQuatK(), 3); Serial.print(' ');
+    Serial.print(myIMU.getQuatReal(), 3); Serial.print(F("  -> yaw ")); Serial.println(readYaw(), 1);
+  } else if (nReset) {
+    Serial.println(F("# sensor keeps resetting - power dip? (motor/servo on the same 3V3/5V rail)"));
+  } else {
+    Serial.println(F("# no heading reports - INT line (PB0) not toggling, or the report was not enabled"));
+  }
+
+  imuOk = true; if (imuState < 1) imuState = 1;
+  zeroYaw();
+  gHeading = 0.0;
+  Serial.print(F("# IMU result: ")); Serial.println(imuState == 2 ? F("OK - heading zeroed") : F("NO HEADING - the car will not move"));
+  Serial.println(F("# ------------------------------------"));
+  return true;
 }
 
 void initHardware() {
@@ -633,7 +677,13 @@ void initHardware() {
 
 void setup() {
   Serial.begin(115200);
+  // USB serial: wait up to 4 s for a monitor (Arduino IDE or openRound.py)
+  // to open the port, so the boot diagnostic below is not lost.
+  while (!Serial && millis() < 4000) {}
+  delay(200);
+  Serial.println(F("\n# ===== PARK OUT boot ====="));
   initHardware();
+  Serial.println(F("# ===== boot done - waiting for the Pi's LiDAR lines ====="));
 }
 
 // While idle, an IMU that gives no heading gets its init re-run every 3 s
