@@ -13,14 +13,18 @@
 // in millimetres. That same Serial is the debug channel, so FSM logs
 // go back to the Pi - prints are state-transition only, never per-loop.
 //
-// PER CORNER
+// PER CORNER  (LiDAR only - the colour sensor plays no part while the
+// LiDAR is alive; it only lights LED2 / LED3)
 //   1. drive straight on IMU heading
-//   2. FIRST corner only: colour line arms the gate and sets direction.
-//      After the direction is locked the colour sensor plays no part in
-//      triggering turns (except the lidar-dead fallback below).
-//   3. turn fires when the turn-side distance reads above SIDE_OPEN_MM
-//      (1500) for SIDE_OPEN_FRAMES consecutive NEW LiDAR frames
-//      (the inner wall has given way)
+//   2. turn fires when a side beam reads above SIDE_OPEN_MM (1500) for
+//      SIDE_OPEN_FRAMES consecutive NEW LiDAR frames (the inner wall has
+//      given way). Until the direction is known BOTH sides are watched and
+//      the side that opens first locks it: right = clockwise, left =
+//      anticlockwise (both at once: the longer beam). After that only the
+//      inner side is watched.
+//   3. FALLBACK: the front beam below FRONT_TURN_MM (200) turns anyway
+//      (direction not known yet: toward the longer side beam). Past the
+//      post-corner lockout this replaces the wall-panic RECOVER on a straight.
 //   4. eased 90 deg arc at full steering lock, then straight back to
 //      DRIVE on the new heading (no lane correction - IMU only)
 //
@@ -30,9 +34,10 @@
 // side beam looks down the next straight, well beyond 1500 mm.
 //
 // DEGRADED MODE
-// No LiDAR frame for 1000 ms sets lidarDead and turns fall back to the
-// colour gate alone - otherwise the side condition could never be met
-// and the car would drive into the outer wall.
+// No LiDAR frame for 1000 ms sets lidarDead. Only then does the colour
+// line trigger turns (and set the direction if it is still unknown:
+// orange = clockwise) - with no LiDAR there is no side or front beam, and
+// the car would drive into the outer wall.
 //
 // STARTUP SEQUENCE
 //   1. Boot: onboard LED (PC13) slow-blinks. loop() only polls Serial -
@@ -43,6 +48,15 @@
 //   3. Button pressed (debounced): car starts driving immediately.
 // The button must be seen RELEASED before a press counts, so a button
 // held (or shorted) at power-up can never launch the car.
+//
+// BUTTON (PB12) DURING AND AFTER A RUN
+//   running  -> press: PAUSE (motor off, everything frozen where it is)
+//   paused   -> press: RESUME exactly where it stopped (mid-straight,
+//               mid-turn or mid-recovery)
+//   finished -> press: a fresh 3-lap run (put the car back in the start
+//               section first)
+// Presses closer than BTN_LOCKOUT_MS are ignored (bounce, double taps).
+//   status LED: slow blink 250 ms while paused
 //
 // STATUS LED (onboard PC13, active LOW)
 //   slow blink 500 ms  waiting for the Pi's first LiDAR frame
@@ -66,7 +80,8 @@ enum RobotState {
   STATE_TURNING,
   STATE_FINAL_STRAIGHT,
   STATE_RECOVER,
-  STATE_FINISHED
+  STATE_FINISHED,
+  STATE_PAUSED               // button pause: resumes the state it interrupted
 };
 
 // ============================================================
@@ -105,6 +120,7 @@ const int BASE_SPEED     = 70;
 const int CORRECTION_PWM = 55;
 
 const unsigned long BTN_DEBOUNCE_MS = 30;
+const unsigned long BTN_LOCKOUT_MS  = 400;   // ignore a second press this soon after one
 
 SPIClass SPI_IMU(PA7, PA6, PA5);  // MOSI, MISO, SCLK
 Servo steeringServo;
@@ -126,12 +142,21 @@ bool          btnLastRaw  = LOW;
 bool          btnStable   = LOW;
 unsigned long btnChangeMs = 0;
 
+unsigned long btnLastPressMs = 0;
+bool          btnPressedOnce = false;
+bool          btnPress       = false;  // set by loop() once per pass: a new press happened
+
 bool startButtonPressed() {          // true once, on the debounced press edge
   bool raw = digitalRead(BTN_START_PIN);
   if (raw != btnLastRaw) { btnLastRaw = raw; btnChangeMs = millis(); }
   if (raw != btnStable && millis() - btnChangeMs >= BTN_DEBOUNCE_MS) {
     btnStable = raw;
-    if (btnStable == LOW) return true;
+    if (btnStable == LOW) {
+      if (btnPressedOnce && millis() - btnLastPressMs < BTN_LOCKOUT_MS) return false;
+      btnPressedOnce = true;
+      btnLastPressMs = millis();
+      return true;
+    }
   }
   return false;
 }
@@ -200,8 +225,10 @@ void serviceLidar() {
 // ---- turn trigger tuning ----
 const uint16_t SIDE_OPEN_MM     = 1500;  // turn side above this = inner wall gone
 const uint8_t  SIDE_OPEN_FRAMES = 3;     // consecutive NEW frames before believing it
+const uint16_t FRONT_TURN_MM    = 200;   // fallback: front closer than this = turn anyway
 
-uint8_t sideOpenCount = 0;
+uint8_t sideOpenCount = 0;               // left + right counts are kept separately:
+uint8_t sideOpenL = 0, sideOpenR = 0;    //   the first to open locks the direction
 
 // ---- wall recovery ----
 const uint16_t WALL_PANIC_MM     = 200;
@@ -236,14 +263,13 @@ RobotState    currentState = STATE_WAIT_START;
 bool          entered = false;
 unsigned long phaseT0 = 0;
 
-BlockColor lockedColor   = COLOR_NONE;
+bool       dirLocked     = false;      // direction known (first corner turned)
 bool       clockwiseMode = true;
 int        cornerCount   = 0;
 
 float targetHeading = 0.0;
 float laneHeading   = 0.0;
 
-BlockColor lastFirstColor = COLOR_NONE;
 
 // cached IMU, refreshed every loop
 bool          gImuFresh = false;
@@ -303,9 +329,7 @@ long absEnc(long v) { return v < 0 ? -v : v; }
 // Which way are we turning, and therefore which side should open?
 // Clockwise means the inner block is on the right, so the RIGHT side
 // gives way at the corner. Counter-clockwise, the left.
-bool turnIsClockwise() {
-  return (lockedColor == COLOR_NONE) ? (lastFirstColor == COLOR_ORANGE) : clockwiseMode;
-}
+bool turnIsClockwise() { return clockwiseMode; }   // valid once dirLocked
 uint16_t turnSideMm() { return turnIsClockwise() ? lidarR : lidarL; }
 
 // ---- IMU ----
@@ -566,7 +590,6 @@ bool turnArcStep(float target) {
 void goState(RobotState s) { currentState = s; entered = false; }
 
 BlockColor dcWantColor;
-bool       dcColorArmed;
 long       dcBaseTicks;
 long       dcLockoutTicks;
 long       dcSafetyTicks;
@@ -645,6 +668,57 @@ void recoverStep() {
 // ============================================================
 // STATE: WAIT START  (Pi connected - wait for the PB12 button)
 // ============================================================
+// A fresh 3-lap run from where the car stands (WAIT_START, or FINISHED).
+void startRun() {
+  dirLocked    = false;
+  cornerCount  = 0;
+  colorMuted   = false;
+  recoverTries = 0;
+  firstSegmentCm      = 0.0;         // lap bookkeeping from a previous run
+  fullStartStraightCm = 0.0;         //   must not leak into this one
+  haveFullStraight    = false;
+  finalDistanceCm     = FINAL_STRAIGHT_CM;
+  laneHeading   = gHeading;
+  targetHeading = laneHeading;
+  zeroEncoder();
+  Serial.print(F("# GO  lidar="));
+  Serial.println(lidarDead ? F("DEAD - colour-only mode") : F("live"));
+  goState(STATE_DRIVE_TO_CORNER);
+}
+
+// ============================================================
+// BUTTON PAUSE / RESUME
+// Like RECOVER, PAUSED remembers the state it interrupted and that
+// state's `entered` flag, so RESUME continues the same straight, arc or
+// recovery instead of restarting it. The servo is left where it was.
+// ============================================================
+RobotState pauseReturnState   = STATE_DRIVE_TO_CORNER;
+bool       pauseReturnEntered = false;
+
+void pauseRun() {
+  pauseReturnState   = currentState;
+  pauseReturnEntered = entered;
+  setMotorSpeed(0);
+  currentState = STATE_PAUSED;
+  entered      = true;
+  Serial.println(F("# PAUSED (button) - press again to resume"));
+}
+
+void resumeRun() {
+  currentState = pauseReturnState;
+  entered      = pauseReturnEntered;
+  resetHeadingPid();
+  sideOpenCount = 0;                 // re-confirm a corner on fresh frames
+  sideOpenL = sideOpenR = 0;
+  switch (currentState) {
+    case STATE_DRIVE_TO_CORNER:
+    case STATE_FINAL_STRAIGHT: setMotorSpeed(BASE_SPEED);   break;
+    case STATE_RECOVER:        setMotorSpeed(-RECOVER_PWM); break;   // keeps its mirrored steering
+    default:                   break;                                // TURNING sets its own PWM
+  }
+  Serial.println(F("# RESUMED (button)"));
+}
+
 void waitStartStep() {
   if (!entered) {
     entered = true;
@@ -654,34 +728,34 @@ void waitStartStep() {
     Serial.println(F("# WAIT_START - press button on PB12"));
   }
 
-  if (startButtonPressed()) {
-    lockedColor  = COLOR_NONE;
-    cornerCount  = 0;
-    colorMuted   = false;
-    recoverTries = 0;
-    laneHeading   = gHeading;
-    targetHeading = laneHeading;
-    zeroEncoder();
-    Serial.print(F("# GO  lidar="));
-    Serial.println(lidarDead ? F("DEAD - colour-only mode") : F("live"));
-    goState(STATE_DRIVE_TO_CORNER);
+  if (btnPress) {
+    btnPress = false;
+    startRun();
   }
 }
 
 // ============================================================
 // STATE: DRIVE TO CORNER
 //
-// Before the direction is locked (first corner): colour arms the gate
-// and records the direction, then the LiDAR side-open confirms the turn.
-// After the lock: the LiDAR side-open alone triggers the turn. Colour is
-// only watched again if the LiDAR dies (degraded-mode fallback).
+// LiDAR only. A side beam > SIDE_OPEN_MM on SIDE_OPEN_FRAMES new frames
+// triggers the turn - before the direction is known both sides are
+// watched and the first to open locks it, after that only the inner side.
+// Fallback: front < FRONT_TURN_MM turns anyway. The colour line is used
+// only when the LiDAR is dead (degraded mode).
 // ============================================================
+// Past the post-corner lockout, a close front on a straight is a corner
+// we missed: turn (below) instead of the wall-panic RECOVER in loop().
+bool driveTurnArmed() {
+  return currentState == STATE_DRIVE_TO_CORNER && entered && !lidarStale &&
+         absEnc(readEncoder()) > dcLockoutTicks;
+}
+
 void driveStep() {
   if (!entered) {
     entered = true;
-    dcWantColor   = lockedColor;
-    dcColorArmed  = false;
+    dcWantColor   = dirLocked ? (clockwiseMode ? COLOR_ORANGE : COLOR_BLUE) : COLOR_NONE;
     sideOpenCount = 0;
+    sideOpenL = sideOpenR = 0;
     resetColorDetector();
     resetHeadingPid();
     dcBaseTicks = readEncoder();
@@ -705,45 +779,49 @@ void driveStep() {
   // arc), so the corner just turned cannot trigger another turn.
   if (absEnc(readEncoder()) <= dcLockoutTicks) return;
 
-  bool directionLocked = (lockedColor != COLOR_NONE);
+  bool trigger = false;
 
-  // ---- 1. colour gate: first corner, or lidar-dead fallback ----
-  if (!dcColorArmed && (!directionLocked || lidarDead)) {
+  if (lidarDead) {
+    // ---- degraded mode: the colour line alone ----
     BlockColor c = detectColor(dcWantColor);
     if (c != COLOR_NONE) {
-      dcColorArmed = true;
-      if (!directionLocked) lastFirstColor = c;
-      sideOpenCount = 0;
-      resetColorDetector();
-      Serial.print(F("# gate ")); Serial.print(c == COLOR_ORANGE ? F("ORANGE") : F("BLUE"));
-      Serial.print(F(" side=")); Serial.println(turnSideMm());
+      if (!dirLocked) {
+        dirLocked     = true;
+        clockwiseMode = (c == COLOR_ORANGE);
+        Serial.println(clockwiseMode ? F("# LOCKED CW (orange, lidar dead)")
+                                     : F("# LOCKED CCW (blue, lidar dead)"));
+      }
+      Serial.println(F("# turn: colour only (lidar dead)"));
+      trigger = true;
     }
-  }
-  if (!directionLocked && !dcColorArmed) return;   // direction not known yet
-
-  // ---- 2. turn confirm: turn side > SIDE_OPEN_MM on consecutive NEW frames ----
-  // Counted per frame, not per loop: loop() runs far faster than the Pi
-  // sends, so a per-loop count would "confirm" on a single frame.
-  uint16_t sideNow = turnSideMm();
-  if (lidarStale) {
-    sideOpenCount = 0;
+  } else if (lidarStale) {
+    sideOpenL = sideOpenR = 0;         // old distances: act on nothing
   } else if (lidarNewFrame) {
-    if (sideNow > SIDE_OPEN_MM) { if (sideOpenCount < 250) sideOpenCount++; }
-    else                        sideOpenCount = 0;
+    // ---- side open: counted per NEW frame, not per loop ----
+    bool watchL = !dirLocked || !clockwiseMode;
+    bool watchR = !dirLocked ||  clockwiseMode;
+    if (watchL && lidarL > SIDE_OPEN_MM) { if (sideOpenL < 250) sideOpenL++; } else sideOpenL = 0;
+    if (watchR && lidarR > SIDE_OPEN_MM) { if (sideOpenR < 250) sideOpenR++; } else sideOpenR = 0;
+    bool openL = sideOpenL >= SIDE_OPEN_FRAMES;
+    bool openR = sideOpenR >= SIDE_OPEN_FRAMES;
+    bool frontClose = lidarF < FRONT_TURN_MM;
+
+    if (openL || openR || frontClose) {
+      if (!dirLocked) {
+        dirLocked = true;
+        if (openL && openR)    clockwiseMode = (lidarR >= lidarL);   // both: the longer beam
+        else if (openL || openR) clockwiseMode = openR;              // the side that opened
+        else                   clockwiseMode = (lidarR >= lidarL);   // front fallback: roomier side
+        Serial.print(clockwiseMode ? F("# LOCKED CW (right side) L=") : F("# LOCKED CCW (left side) L="));
+        Serial.print(lidarL); Serial.print(F(" R=")); Serial.println(lidarR);
+      }
+      if (openL || openR) { Serial.print(F("# turn: side open ")); Serial.println(turnSideMm()); }
+      else                { Serial.print(F("# turn: FRONT fallback, front=")); Serial.println(lidarF); }
+      trigger = true;
+    }
   }
 
-  bool sideOpen = (sideOpenCount >= SIDE_OPEN_FRAMES);
-
-  if (sideOpen || (lidarDead && dcColorArmed)) {
-    if (sideOpen) { Serial.print(F("# turn: side open ")); Serial.println(sideNow); }
-    else          Serial.println(F("# turn: colour only (lidar dead)"));
-
-    if (!directionLocked) {
-      lockedColor   = lastFirstColor;
-      clockwiseMode = (lockedColor == COLOR_ORANGE);
-      Serial.println(clockwiseMode ? F("# LOCKED CW (orange)") : F("# LOCKED CCW (blue)"));
-    }
-
+  if (trigger) {
     // Segments are measured to the turn trigger point (same reference
     // for A and L, so final = L - A still lands on the start position).
     float segCm = absEnc(readEncoder()) / TICKS_PER_CM;
@@ -835,6 +913,22 @@ void loop() {
     Serial.println(F("# first LiDAR frame received - FSM starting"));
   }
 
+  // ---- button: start (WAIT_START), pause / resume (running), restart (FINISHED) ----
+  btnPress = startButtonPressed();
+  if (btnPress) {
+    if (currentState == STATE_PAUSED) {
+      btnPress = false;
+      resumeRun();
+    } else if (currentState == STATE_FINISHED) {
+      btnPress = false;
+      Serial.println(F("# RESTART (button)"));
+      startRun();
+    } else if (currentState != STATE_WAIT_START) {
+      btnPress = false;
+      pauseRun();
+    }                                // WAIT_START: waitStartStep() consumes it
+  }
+
   // Release the colour mute once we are forward of where the reverse began.
   if (colorMuted && currentState != STATE_RECOVER && readEncoder() >= colorMuteFrom) {
     colorMuted = false;
@@ -847,6 +941,8 @@ void loop() {
       currentState != STATE_RECOVER &&
       currentState != STATE_WAIT_START &&
       currentState != STATE_FINISHED &&
+      currentState != STATE_PAUSED &&
+      !driveTurnArmed() &&                 // a straight turns at the front fallback instead
       recoverTries < RECOVER_MAX_TRIES &&
       lidarF <= WALL_PANIC_MM) {
     enterRecovery();
@@ -855,6 +951,7 @@ void loop() {
   // Onboard LED: solid while the Pi is feeding frames (ready or running),
   // fast blink if the feed goes stale. Always solid once FINISHED.
   if (currentState == STATE_FINISHED) statusLed(true);
+  else if (currentState == STATE_PAUSED) statusBlink(250);
   else if (lidarStale)                statusBlink(100);
   else                                statusLed(true);
 
@@ -864,6 +961,7 @@ void loop() {
     case STATE_TURNING:         turningStep();       break;
     case STATE_FINAL_STRAIGHT:  finalStraightStep(); break;
     case STATE_RECOVER:         recoverStep();       break;
+    case STATE_PAUSED:          setMotorSpeed(0);    break;   // until the next press
 
     case STATE_FINISHED:
       if (!entered) {
