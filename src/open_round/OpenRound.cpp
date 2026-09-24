@@ -33,6 +33,15 @@
 // more than ~1000 mm mid-straight. Past the end of the inner wall the
 // side beam looks down the next straight, well beyond 1500 mm.
 //
+// STOPPING WHERE IT STARTED
+// At START the front beam's distance to the wall ahead is remembered
+// (median of the last 5 frames while standing). After turn 12 the car
+// drives the start straight until the front beam is back near that value
+// (encoder L - A only bounds it), then ALIGNS: creeps forward / backward
+// at ALIGN_PWM until the front is within FRONT_DEADBAND_MM of the start
+// value on a settled (stopped) reading. No usable front at START (beyond
+// the LiDAR's 3.5 m, or LiDAR dead) -> the old encoder L - A stop.
+//
 // DEGRADED MODE
 // No LiDAR frame for 1000 ms sets lidarDead. Only then does the colour
 // line trigger turns (and set the direction if it is still unknown:
@@ -245,6 +254,27 @@ const int   FINAL_STRAIGHT_CM   = 100;
 const float SEARCH_SAFETY_CM    = 400.0;
 const float POST_CORNER_LOCKOUT_CM = 50.0;
 
+// ---- stop at the start position (front beam) ----
+const uint16_t FRONT_DEADBAND_MM  = 20;     // done when |front - start front| <= this
+const uint16_t FRONT_SLOW_MM      = 150;    // hand over to ALIGN this far before the target
+const int      ALIGN_PWM          = 50;     // creep speed both ways (raise if the car won't move)
+const unsigned long ALIGN_SETTLE_MS  = 300; // stopped this long before a reading counts (~3 revs)
+const unsigned long ALIGN_TIMEOUT_MS = 6000;// give up aligning, stop where it is
+const float    FRONT_WINDOW_CM    = 60.0;   // front stop only once encoder >= L - A - this
+const float    FRONT_BACKSTOP_CM  = 60.0;   //   and never drive past L - A + this blind
+
+uint16_t frontHist[5] = { LIDAR_FAR, LIDAR_FAR, LIDAR_FAR, LIDAR_FAR, LIDAR_FAR };
+uint8_t  frontHistIdx = 0;
+uint16_t startFrontMm = LIDAR_FAR;          // LIDAR_FAR = unknown -> encoder stop
+
+uint16_t frontMedian() {
+  uint16_t v[5];
+  for (int i = 0; i < 5; i++) v[i] = frontHist[i];
+  for (int i = 1; i < 5; i++)                       // insertion sort, 5 values
+    for (int j = i; j > 0 && v[j] < v[j - 1]; j--) { uint16_t t = v[j]; v[j] = v[j - 1]; v[j - 1] = t; }
+  return v[2];
+}
+
 float firstSegmentCm      = 0.0;
 float fullStartStraightCm = 0.0;
 bool  haveFullStraight    = false;
@@ -419,6 +449,7 @@ BlockColor detectColor(BlockColor wantColor) {
 void serviceSensors() {
   lidarNewFrame = false;
   serviceLidar();
+  if (lidarNewFrame) { frontHist[frontHistIdx] = lidarF; frontHistIdx = (frontHistIdx + 1) % 5; }
 
   gImuFresh = false;
   if (myIMU.wasReset()) myIMU.enableGameRotationVector();
@@ -680,6 +711,10 @@ void startRun() {
   finalDistanceCm     = FINAL_STRAIGHT_CM;
   laneHeading   = gHeading;
   targetHeading = laneHeading;
+  startFrontMm  = lidarStale ? LIDAR_FAR : frontMedian();   // LIDAR_FAR if > 3.5 m / no return
+  Serial.print(F("# start front "));
+  if (startFrontMm < LIDAR_FAR) Serial.println(startFrontMm);
+  else                          Serial.println(F("unknown - will stop on the encoder (L - A)"));
   zeroEncoder();
   Serial.print(F("# GO  lidar="));
   Serial.println(lidarDead ? F("DEAD - colour-only mode") : F("live"));
@@ -871,20 +906,87 @@ void turningStep() {
 // STATE: FINAL STRAIGHT
 // Encoder counts from the end of turn 12 - drive until it reaches L - A.
 // ============================================================
+// Reverse heading hold (P only): reversing, the wheels act the other way,
+// so the correction flips sign.
+void reverseHeadingHold(float heading) {
+  if (!gImuFresh) return;
+  float error = wrapDeg(heading - gHeading);                 // + = nose must go left
+  setServoAngle(constrain(SERVO_TRUE_STRAIGHT + HEAD_KP * error, SERVO_MAX_LEFT, SERVO_MAX_RIGHT));
+}
+
+enum FinalPhase { FS_DRIVE, FS_ALIGN };
+FinalPhase    fsPhase;
+long          fsMinTicks, fsMaxTicks;
+unsigned long fsAlignT0, fsStillSince;
+int           fsDir;                  // ALIGN: +1 forward, -1 back, 0 stopped (settling)
+
+void finishFinal(const __FlashStringHelper *why) {
+  setMotorSpeed(0);
+  setServoAngle(SERVO_TRUE_STRAIGHT);
+  Serial.print(F("# STOP ")); Serial.print(why);
+  Serial.print(F(" front=")); Serial.print(lidarF);
+  Serial.print(F(" start front=")); Serial.print(startFrontMm);
+  Serial.print(F(" driven cm=")); Serial.println(absEnc(readEncoder()) / TICKS_PER_CM);
+  goState(STATE_FINISHED);
+}
+
 void finalStraightStep() {
+  bool useFront = startFrontMm < LIDAR_FAR;
   if (!entered) {
     entered = true;
-    Serial.print(F("# FINAL_STRAIGHT ")); Serial.println(finalDistanceCm);
+    Serial.print(F("# FINAL_STRAIGHT ")); Serial.print(finalDistanceCm);
+    Serial.println(useFront ? F(" cm (encoder bound), stop on the front beam")
+                            : F(" cm on the encoder (no start front)"));
     resetHeadingPid();
     setMotorSpeed(BASE_SPEED);
     fsTargetTicks = (long)(finalDistanceCm * TICKS_PER_CM);
+    // front stop allowed once near L - A; if L was never measured, anywhere
+    fsMinTicks = haveFullStraight ? (long)(fmax(0.0, finalDistanceCm - FRONT_WINDOW_CM) * TICKS_PER_CM) : 0;
+    fsMaxTicks = haveFullStraight ? (long)((finalDistanceCm + FRONT_BACKSTOP_CM) * TICKS_PER_CM)
+                                  : (long)(300.0 * TICKS_PER_CM);
+    fsPhase = FS_DRIVE;
   }
-  updateHeadingPid(laneHeading);
-  if (absEnc(readEncoder()) >= fsTargetTicks) {
+  long driven = absEnc(readEncoder());
+
+  if (!useFront) {                                  // the old encoder stop
+    updateHeadingPid(laneHeading);
+    if (driven >= fsTargetTicks) finishFinal(F("(encoder L - A)"));
+    return;
+  }
+
+  if (fsPhase == FS_DRIVE) {
+    updateHeadingPid(laneHeading);
+    bool nearTarget = !lidarStale && lidarF <= startFrontMm + FRONT_SLOW_MM;
+    if ((nearTarget && driven >= fsMinTicks) || driven >= fsMaxTicks) {
+      if (!nearTarget) Serial.println(F("# final: encoder backstop reached, aligning on the front beam"));
+      setMotorSpeed(0);
+      fsPhase = FS_ALIGN; fsDir = 0;
+      fsAlignT0 = fsStillSince = millis();
+      Serial.println(F("# ALIGN"));
+    }
+    return;
+  }
+
+  // ---- FS_ALIGN: creep forward / backward until the front matches ----
+  if (millis() - fsAlignT0 > ALIGN_TIMEOUT_MS) { finishFinal(F("(align timeout)")); return; }
+  if (lidarStale) { setMotorSpeed(0); fsDir = 0; fsStillSince = millis(); return; }
+  int err = (int)lidarF - (int)startFrontMm;       // + = still too far from the wall: forward
+  if (fsDir == 0) {                                 // stopped: wait for a settled reading
     setMotorSpeed(0);
-    setServoAngle(SERVO_TRUE_STRAIGHT);
-    goState(STATE_FINISHED);
+    if (millis() - fsStillSince < ALIGN_SETTLE_MS) return;
+    if (abs(err) <= FRONT_DEADBAND_MM) { finishFinal(F("(front matched)")); return; }
+    fsDir = (err > 0) ? 1 : -1;
+    resetHeadingPid();
   }
+  // moving: stop as soon as the reading crosses into the deadband (or past it)
+  if ((fsDir > 0 && err <= FRONT_DEADBAND_MM) || (fsDir < 0 && err >= -(int)FRONT_DEADBAND_MM)) {
+    setMotorSpeed(0);
+    fsDir = 0;
+    fsStillSince = millis();
+    return;
+  }
+  if (fsDir > 0) { updateHeadingPid(laneHeading);   setMotorSpeed(ALIGN_PWM);  }
+  else           { reverseHeadingHold(laneHeading); setMotorSpeed(-ALIGN_PWM); }
 }
 
 // ============================================================
