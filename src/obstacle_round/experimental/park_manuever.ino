@@ -221,7 +221,8 @@ void serviceLidar() {
     else lidarLen = 0;
   }
 }
-bool lidarStale() { return lidarFrames == 0 || millis() - lidarLastMs > 200; }
+bool lidarStale() { return lidarFrames == 0 || millis() - lidarLastMs > 200; }    // LED hint only
+bool lidarDead()  { return lidarFrames == 0 || millis() - lidarLastMs > 1000; }   // as OpenRound.ino
 
 // ---------------- ToF, non-blocking ----------------
 void tcaselect(uint8_t ch) { Wire.beginTransmission(TCA_ADDR); Wire.write(1 << ch); Wire.endTransmission(); }
@@ -536,13 +537,41 @@ void setup() {
   }
 }
 
+void loopBody();
+
+// ---- loop timing: something blocking the loop (an I2C / SPI call stuck on
+// its timeout) starves the Pi's serial feed. Report it, once a second.
+const char *slowNames[] = { "LiDAR serial", "IMU (SPI)", "front ToF (I2C)", "rear ToF (I2C)", "rest of loop" };
+unsigned long slowMax[5], loopMaxUs = 0, slowReportMs = 0, loopStartUs = 0;
+inline void timeIt(int i, unsigned long t0) { unsigned long d = micros() - t0; if (d > slowMax[i]) slowMax[i] = d; }
+void reportSlowLoop() {
+  unsigned long d = micros() - loopStartUs;
+  if (d > loopMaxUs) loopMaxUs = d;
+  if (millis() - slowReportMs < 1000) return;
+  slowReportMs = millis();
+  if (loopMaxUs > 50000UL) {                      // a loop pass over 50 ms in the last second
+    int w = 0; for (int i = 1; i < 5; i++) if (slowMax[i] > slowMax[w]) w = i;
+    Serial.print(F("# SLOW LOOP: ")); Serial.print(loopMaxUs / 1000); Serial.print(F(" ms max, worst: "));
+    Serial.print(slowNames[w]); Serial.print(' '); Serial.print(slowMax[w] / 1000); Serial.println(F(" ms"));
+  }
+  loopMaxUs = 0; for (int i = 0; i < 5; i++) slowMax[i] = 0;
+}
+
 void loop() {
-  serviceLidar();
-  serviceImu();
+  loopStartUs = micros();
+  unsigned long t0 = micros(); serviceLidar(); timeIt(0, t0);
+  t0 = micros(); serviceImu(); timeIt(1, t0);
   serviceSpeed();
   servicePose();
-  if (frontOk) pollTof(tofFront, FRONT_TOF_CH, frontMm, frontMs);
-  if (rearOk)  pollTof(tofRear,  REAR_TOF_CH,  rearMm,  rearMs);
+  t0 = micros(); if (frontOk) pollTof(tofFront, FRONT_TOF_CH, frontMm, frontMs); timeIt(2, t0);
+  t0 = micros(); if (rearOk)  pollTof(tofRear,  REAR_TOF_CH,  rearMm,  rearMs);  timeIt(3, t0);
+  t0 = micros();
+  loopBody();
+  timeIt(4, t0);
+  reportSlowLoop();
+}
+
+void loopBody() {
 
   // ---- startup gate (as OpenRound.ino): nothing runs until the Pi's first frame ----
   if (st == P_WAIT_PI) {
@@ -595,7 +624,11 @@ void loop() {
       break;
 
     case P_DECIDE:                                   // 1. which side is open?
-      if (lidarStale()) { stopCar(F("ABORT: no LiDAR frames from the Pi (is openRound.py running?)"), P_ABORT); break; }
+      if (lidarDead()) {                             // 1 s of silence - short gaps just wait
+        Serial.print(F("# no LiDAR line for ")); Serial.print(millis() - lidarLastMs);
+        Serial.print(F(" ms (")); Serial.print(lidarFrames); Serial.println(F(" lines so far)"));
+        stopCar(F("ABORT: no LiDAR frames from the Pi (is openRound.py running?)"), P_ABORT); break;
+      }
       if (!lidarNewRev) break;                       // one sample per LiDAR revolution
       medL[medN] = lidarL; medR[medN] = lidarR;
       if (++medN < DECIDE_REVS) break;
