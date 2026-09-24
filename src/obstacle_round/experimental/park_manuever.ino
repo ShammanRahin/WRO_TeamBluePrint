@@ -54,6 +54,10 @@
 //        fast blink (100 ms) = Pi feed stale, very fast (60 ms) = aborted
 // Serial log: '#' lines per leg: why it ended, ToF, body gap, and how far
 // the car coasted after the stop (tune BRAKE_S from that).
+// If a ToF is down (failed at boot or stops answering): FRONT -> the LiDAR
+// front minus LIDAR_TO_FRONT_MM stands in; REAR -> reverse legs are blind,
+// so each is capped at half a wheel turn (REAR_BLIND_CAP_CM). The log says
+// "# front/rear ToF DOWN" when it switches.
 // FIRST: run tof_pair_test.ino and set TOF_MIN_MM / PARK_SAFE_MM and the
 // *_TOF_INSET_MM values; measure REAR_AXLE_MM and CAR_HALF_W_MM.
 // ============================================================
@@ -124,6 +128,15 @@ const float WALL_MARGIN_MM    = 20.0;     //   ... or this close to the outer wa
 const uint16_t TOF_MIN_MM     = 40;       // ToF readings below this are not trusted: the model treats
                                           // that block as touching the bumper (tof_pair_test finds it)
 
+// ---- fallbacks when a ToF is down (failed at boot, or stops answering mid-run) ----
+const float LIDAR_TO_FRONT_MM   = 105.0;  // FRONT ToF down -> front = LiDAR front - this. MEASURE it:
+                                          // LiDAR centre to the front bumper. Too SMALL = the car thinks
+                                          // it has more room than it has (105 = LiDAR mid-car, 210 car)
+const float LIDAR_EXTRA_BRAKE_S = 0.10;   // the LiDAR front is 10 Hz: up to 100 ms old -> stop earlier
+const float TICKS_PER_WHEEL_REV = 240.0;  // encoder ticks per full wheel turn (measured)
+const float REAR_BLIND_CAP_CM   = 0.5f * TICKS_PER_WHEEL_REV / TICKS_PER_CM;   // REAR ToF down ->
+                                          // every reverse leg is at most HALF a wheel turn (120 ticks = 8.1 cm)
+
 SPIClass SPI_IMU(PA7, PA6, PA5);
 Servo    steeringServo;
 BNO08x   myIMU;
@@ -188,9 +201,10 @@ bool buttonPressed() {
 //   sample per rev (~10 Hz), the other frames resend it. The Pi sends
 //   nothing until its LiDAR is really scanning (the startup gate below),
 //   and it prints our '#' lines on its console.
-// Only left and right are used, and only to pick the open side at the start.
+// Left and right pick the open side at the start; front stands in for the
+// front ToF if that one is down.
 const uint16_t LIDAR_FAR = 9999;          // internal: no valid return / out of range
-uint16_t lidarL = LIDAR_FAR, lidarR = LIDAR_FAR;
+uint16_t lidarL = LIDAR_FAR, lidarF = LIDAR_FAR, lidarR = LIDAR_FAR;
 long     lidarRev = -1;
 unsigned long lidarLastMs = 0;
 uint32_t lidarFrames = 0;
@@ -210,6 +224,7 @@ void serviceLidar() {
         char *c3 = c2 ? strchr(c2 + 1, ',') : NULL;
         if (c1 && c2) {
           lidarL = lSan(atol(lidarBuf));
+          lidarF = lSan(atol(c1 + 1));
           lidarR = lSan(atol(c2 + 1));
           long rev = c3 ? atol(c3 + 1) : lidarRev + 1;   // no rev field: every line is new
           if (rev != lidarRev) { lidarRev = rev; lidarNewRev = true; }
@@ -252,6 +267,34 @@ void pollTof(VL53L0X &s, uint8_t ch, uint16_t &mm, unsigned long &t) {
 }
 bool frontBlind() { return !frontOk || millis() - frontMs > TOF_STALE_MS; }
 bool rearBlind()  { return !rearOk  || millis() - rearMs  > TOF_STALE_MS; }
+
+// Front distance, bumper to obstacle: the front ToF, else the LiDAR front.
+// false only when BOTH are down. brakeS = how early to stop at the current speed.
+bool frontDist(uint16_t &mm, float &brakeS, bool &fromLidar) {
+  brakeS = BRAKE_S; fromLidar = false;
+  if (!frontBlind()) { mm = frontMm; return true; }
+  if (lidarStale())  { mm = TOF_FAR; return false; }
+  fromLidar = true; brakeS = BRAKE_S + LIDAR_EXTRA_BRAKE_S;
+  mm = lidarF >= LIDAR_FAR ? TOF_FAR : (uint16_t)fmaxf(0.0f, lidarF - LIDAR_TO_FRONT_MM);
+  return true;
+}
+bool frontDist(uint16_t &mm, float &brakeS) { bool l; return frontDist(mm, brakeS, l); }
+
+// say so in the log whenever a ToF drops out or comes back
+int8_t frontMode = -1, rearMode = -1;
+void noteSensorModes() {
+  int8_t f = frontBlind() ? 1 : 0, r = rearBlind() ? 1 : 0;
+  if (f != frontMode) {
+    frontMode = f;
+    if (f) { Serial.print(F("# front ToF DOWN - using the LiDAR front minus ")); Serial.print(LIDAR_TO_FRONT_MM, 0); Serial.println(F(" mm")); }
+    else Serial.println(F("# front ToF ok"));
+  }
+  if (r != rearMode) {
+    rearMode = r;
+    if (r) { Serial.print(F("# rear ToF DOWN - every reverse leg capped at ")); Serial.print(REAR_BLIND_CAP_CM, 1); Serial.println(F(" cm (half a wheel turn)")); }
+    else Serial.println(F("# rear ToF ok"));
+  }
+}
 
 // ---------------- IMU ----------------
 bool  gImuFresh = false;
@@ -326,9 +369,10 @@ void bodyGaps(float *g) {
   }
 }
 float bodyClearance() { float g[NOBS]; bodyGaps(g); return fminf(g[0], fminf(g[1], g[2])); }
-void placeModel(uint16_t closedSideMm) {
+void placeModel(uint16_t closedSideMm, uint16_t frontMm, uint16_t rearMm, bool frontFromLidar) {
   px = py = 0; poseTicks = readEncoder(); modelOn = true;
-  float fGap = frontMm < TOF_MIN_MM ? 0.0f : frontMm - FRONT_TOF_INSET_MM;   // bumper to block
+  float fGap = frontFromLidar ? (float)frontMm                            // LiDAR: already bumper-based
+             : frontMm < TOF_MIN_MM ? 0.0f : frontMm - FRONT_TOF_INSET_MM;  // bumper to block
   float rGap = rearMm  < TOF_MIN_MM ? 0.0f : rearMm  - REAR_TOF_INSET_MM;
   faceF = frontMm < TOF_FAR ? (CAR_LEN_MM - REAR_AXLE_MM) + fmaxf(fGap, 0.0f) : 1e6;
   faceR = rearMm  < TOF_FAR ? -REAR_AXLE_MM - fmaxf(rGap, 0.0f) : -1e6;
@@ -411,8 +455,12 @@ int maneuverStep() {
 
   // ---- LEG_MOVE ----
   bool fwd = mv.dir > 0;
-  bool blind = fwd ? frontBlind() : rearBlind();
-  uint16_t guard = fwd ? frontMm : rearMm;
+  bool blind = false, capBlind = false;
+  uint16_t guard = TOF_FAR; float brakeS = BRAKE_S;
+  float cap = (mv.legs == 1 ? mv.firstCapCm : LEG_CAP_CM);
+  if (fwd)               blind = !frontDist(guard, brakeS);      // front ToF, else the LiDAR front
+  else if (!rearBlind()) guard = rearMm;
+  else { cap = fminf(cap, REAR_BLIND_CAP_CM); capBlind = true; } // no rear eyes: half a wheel turn
   float legCm = absEnc(readEncoder() - mv.legTicks0) / TICKS_PER_CM;
   // body model: the nearest obstacle this leg is moving TOWARD (each tracked on its own -
   // a block corner can close in fast while the wall, still nearer, is opening up)
@@ -426,10 +474,10 @@ int maneuverStep() {
   if (fresh) mv.gMs = millis();
   bool closing = clr < 1e5f;
   const __FlashStringHelper *why = NULL;
-  if (blind)                     why = fwd ? F("front ToF not answering") : F("rear ToF not answering");
-  else if (guard < PARK_SAFE_MM + gSpeedMmps * BRAKE_S) why = fwd ? F("front ToF") : F("rear ToF");
+  if (blind)                     why = F("front ToF AND LiDAR front both down");
+  else if (guard < PARK_SAFE_MM + gSpeedMmps * brakeS) why = fwd ? F("front distance") : F("rear ToF");
   else if (closing && clr < CORNER_MARGIN_MM + 1.4f * gSpeedMmps * BRAKE_S) why = F("body model (corner)");
-  else if (legCm >= (mv.legs == 1 ? mv.firstCapCm : LEG_CAP_CM)) why = F("leg cap");
+  else if (legCm >= cap)         why = capBlind ? F("half-wheel cap (rear ToF down)") : F("leg cap");
 
   if (why) {
     setMotorSpeed(0);
@@ -438,7 +486,7 @@ int maneuverStep() {
     Serial.print(fwd ? F(" FWD ") : F(" REV ")); Serial.print(legCm, 1); Serial.print(F(" cm, turned "));
     Serial.print(turned, 1); Serial.print(F(" deg, heading ")); Serial.print(gHeading, 1);
     Serial.print(F(", ended: ")); Serial.print(why);
-    if (!blind && guard < TOF_FAR) { Serial.print(F(", ToF ")); Serial.print(guard); Serial.print(F(" mm")); }
+    if (!blind && guard < TOF_FAR) { Serial.print(fwd ? F(", front ") : F(", rear ")); Serial.print(guard); Serial.print(F(" mm")); }
     Serial.print(F(", body gap ")); Serial.print(fminf(g[0], fminf(g[1], g[2])), 0); Serial.print(F(" mm"));
     Serial.println();
     if (blind) return -1;                                  // cannot see the wall: never move on blind
@@ -583,6 +631,8 @@ void loopBody() {
     return;
   }
 
+  noteSensorModes();
+
   // ---- button (as OpenRound.ino): start / pause / resume / run again ----
   bool press = buttonPressed();
   bool moving = (st == P_DECIDE || st == P_PIVOT || st == P_EXIT || st == P_REALIGN);
@@ -655,16 +705,20 @@ void loopBody() {
         } else {
           stopCar(F("ABORT: no LiDAR return on either side"), P_ABORT); break;
         }
-        if (frontBlind() || rearBlind()) { stopCar(F("ABORT: a ToF sensor is not answering"), P_ABORT); break; }
-        if (frontMm < PARK_SAFE_MM + 5 && rearMm < PARK_SAFE_MM + 5) {
+        uint16_t fMm; float bS; bool fLidar;
+        if (!frontDist(fMm, bS, fLidar)) { stopCar(F("ABORT: front ToF and LiDAR front both down"), P_ABORT); break; }
+        uint16_t rMm = rearBlind() ? 0 : rearMm;   // no rear ToF: assume the rear block touches the bumper
+        if (fLidar)      Serial.println(F("# front ToF down - lot placed from the LiDAR front"));
+        if (rearBlind()) Serial.println(F("# rear ToF down - rear block assumed right behind the bumper"));
+        if (fMm < PARK_SAFE_MM + 5 && rMm < PARK_SAFE_MM + 5) {
           // no room for a single leg: both ends are already inside the stop distance
           Serial.print(F("# lot too tight for PARK_SAFE_MM=")); Serial.print(PARK_SAFE_MM);
           Serial.println(F(" - lower it (see tof_pair_test for how low the sensors stay reliable)"));
           stopCar(F("ABORT: no room to move"), P_ABORT); break;
         }
         startHeading = gHeading;
-        placeModel(lo);
-        if (rearMm > 40 || lo - CAR_HALF_W_MM < 60)
+        placeModel(lo, fMm, rMm, fLidar);
+        if (rMm > 40 || lo - CAR_HALF_W_MM < 60)
           Serial.println(F("# tip: park at the BACK of the lot and out toward the track (60+ mm off the wall) - most room to turn"));
         outHeading = wrapDeg(startHeading + 90.0f * openRot);
         Serial.print(F("# open side: ")); Serial.println(openRot > 0 ? F("LEFT") : F("RIGHT"));
@@ -680,7 +734,7 @@ void loopBody() {
         exitTicks0 = readEncoder();
         setServoAngle(SERVO_TRUE_STRAIGHT);
         legPwm = LEG_PWM_START; legPwmMs = millis();
-        Serial.print(F("# EXIT: forward until front ToF ")); Serial.print(EXIT_FRONT_MM); Serial.println(F(" mm"));
+        Serial.print(F("# EXIT: forward until the front reads ")); Serial.print(EXIT_FRONT_MM); Serial.println(F(" mm"));
         go(P_EXIT);
       }
       break;
@@ -688,13 +742,14 @@ void loopBody() {
 
     case P_EXIT: {                                    // 3. straight out, heading hold
       float outCm = absEnc(readEncoder() - exitTicks0) / TICKS_PER_CM;
-      if (frontBlind()) { stopCar(F("ABORT: front ToF not answering in EXIT"), P_ABORT); break; }
-      bool atWall = frontMm < TOF_FAR && frontMm <= EXIT_FRONT_MM + gSpeedMmps * BRAKE_S;
+      uint16_t fMm; float bS;
+      if (!frontDist(fMm, bS)) { stopCar(F("ABORT: front ToF and LiDAR front both down in EXIT"), P_ABORT); break; }
+      bool atWall = fMm < TOF_FAR && fMm <= EXIT_FRONT_MM + gSpeedMmps * bS;
       if (atWall || outCm >= EXIT_CAP_CM) {
         setMotorSpeed(0);
         Serial.print(F("# EXIT ended: "));
-        Serial.print(atWall ? F("front ToF at the inner wall") : F("distance cap (front ToF saw nothing)"));
-        Serial.print(F(" rear=")); Serial.print(rearMm); Serial.print(F(" front=")); Serial.print(frontMm);
+        Serial.print(atWall ? F("front at the inner wall") : F("distance cap (front saw nothing)"));
+        Serial.print(F(" front=")); Serial.print(fMm);
         Serial.print(F(" out cm=")); Serial.println(outCm, 1);
         startManeuver("REALIGN", startHeading, -openRot, -1, ARC_CAP_CM);   // 4. one full-lock reverse arc
         go(P_REALIGN);
@@ -704,7 +759,7 @@ void loopBody() {
         float err = wrapDeg(outHeading - gHeading);            // + = nose must go left
         setServoAngle(SERVO_TRUE_STRAIGHT - constrain(2.0f * err, -30.0f, 30.0f));
       }
-      float room = frontMm < TOF_FAR ? (float)frontMm - EXIT_FRONT_MM : 1e6f;
+      float room = fMm < TOF_FAR ? (float)fMm - EXIT_FRONT_MM : 1e6f;
       setMotorSpeed(legSpeedPwm(room));
       break;
     }
