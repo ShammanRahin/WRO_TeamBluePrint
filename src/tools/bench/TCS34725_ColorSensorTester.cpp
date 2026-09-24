@@ -1,105 +1,122 @@
+#include <Arduino.h>
 #include <Wire.h>
+#include <VL53L0X.h>
 
-#define TCA_ADDR 0x70
-#define TCS_ADDR 0x29
+// ============================================================
+// MUX SCAN - finds which TCA9548A channel each sensor is on.
+// Every 3 s it scans channels 0-7 (the mux has no channel 8) and the bare
+// bus (all channels off), prints every I2C address it finds, and names
+// what sits at 0x29:
+//   VL53L0X  = ToF (model ID 0xEE)
+//   TCS34725 = the old colour sensor (same 0x29 address, ID 0x44 / 0x4D)
+// Every VL53L0X found is started and its distance printed in between scans.
+// A sensor that shows up on EVERY channel is wired to the main bus,
+// not through the mux.
+// ============================================================
 
-// Your selection function
-void tcaselect(uint8_t i) {
-  if (i > 7) return;
+#define I2C_SCL     PB6
+#define I2C_SDA     PB7
+#define TCA_RST_PIN PB8
+#define TCA_ADDR    0x70
+
+VL53L0X tof[8];
+bool tofOn[8];
+
+void tcaselect(int ch) {                 // ch < 0 = all channels off
   Wire.beginTransmission(TCA_ADDR);
-  Wire.write(1 << i);
+  Wire.write(ch < 0 ? 0 : (1 << ch));
   Wire.endTransmission();
+}
+
+bool present(uint8_t addr) {
+  Wire.beginTransmission(addr);
+  return Wire.endTransmission() == 0;
+}
+
+int readReg8(uint8_t addr, uint8_t reg) {
+  Wire.beginTransmission(addr);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return -1;
+  if (Wire.requestFrom(addr, (uint8_t)1) != 1) return -1;
+  return Wire.read();
+}
+
+void scanChannel(int ch) {
+  tcaselect(ch);
+  delay(2);
+  if (ch < 0) Serial.print(F("bus : "));
+  else { Serial.print(F("CH")); Serial.print(ch); Serial.print(F("  : ")); }
+  int found = 0;
+  for (uint8_t a = 1; a < 127; a++) {
+    if (a == TCA_ADDR) continue;         // the mux itself
+    if (!present(a)) continue;
+    found++;
+    Serial.print(F("0x")); if (a < 16) Serial.print('0'); Serial.print(a, HEX);
+    if (a == 0x29) {
+      int vlId  = readReg8(0x29, 0xC0);          // VL53L0X model ID
+      int tcsId = readReg8(0x29, 0x80 | 0x12);   // TCS34725 ID register
+      if (vlId == 0xEE)                     Serial.print(F(" VL53L0X"));
+      else if (tcsId == 0x44 || tcsId == 0x4D) Serial.print(F(" TCS34725 (colour)"));
+      else                                  Serial.print(F(" unknown"));
+      if (vlId == 0xEE && ch >= 0 && !tofOn[ch]) {
+        tof[ch].setBus(&Wire);
+        tof[ch].setTimeout(500);
+        if (tof[ch].init()) {
+          tof[ch].setMeasurementTimingBudget(30000);
+          tof[ch].startContinuous();
+          tofOn[ch] = true;
+          Serial.print(F(" started"));
+        } else {
+          Serial.print(F(" init FAILED"));
+        }
+      }
+    }
+    Serial.print(F("  "));
+  }
+  if (!found) Serial.print(F("nothing"));
+  Serial.println();
 }
 
 void setup() {
   Serial.begin(115200);
   while (!Serial && millis() < 3000);
 
-  // Set explicit I2C pins for STM32 Blackpill
-  Wire.setSDA(PB7);
-  Wire.setSCL(PB6);
+  pinMode(TCA_RST_PIN, OUTPUT);
+  digitalWrite(TCA_RST_PIN, LOW);  delay(10);
+  digitalWrite(TCA_RST_PIN, HIGH); delay(10);
+
+  Wire.setSCL(I2C_SCL);
+  Wire.setSDA(I2C_SDA);
   Wire.begin();
+  Wire.setClock(100000);                 // slow and safe for scanning
   delay(100);
 
-  Serial.println("\n--- TCA9548A & TCS34725 Finder ---");
-
-  // Verify Multiplexer is present at 0x70
-  Wire.beginTransmission(TCA_ADDR);
-  if (Wire.endTransmission() != 0) {
-    Serial.println("ERROR: TCA9548A (0x70) not found! Check SCL/SDA wiring.");
-    while (1);
-  }
-  Serial.println("TCA9548A found at 0x70.");
-
-  // Scan channels 0-7 to locate the TCS34725
-  bool found = false;
-  for (uint8_t i = 0; i < 8; i++) {
-    tcaselect(i);
-    delay(10);
-
-    Wire.beginTransmission(TCS_ADDR);
-    if (Wire.endTransmission() == 0) {
-      Serial.print("SUCCESS: TCS34725 found on Channel ");
-      Serial.println(i);
-
-      // Initialize TCS34725
-      Wire.beginTransmission(TCS_ADDR);
-      Wire.write(0x80 | 0x00); // Enable Register
-      Wire.write(0x01);        // Power ON
-      Wire.endTransmission();
-      delay(3);
-
-      Wire.beginTransmission(TCS_ADDR);
-      Wire.write(0x80 | 0x00);
-      Wire.write(0x03);        // Power ON + RGBC Enable
-      Wire.endTransmission();
-
-      Wire.beginTransmission(TCS_ADDR);
-      Wire.write(0x80 | 0x01); // ATIME (Integration time ~50ms)
-      Wire.write(0xEB);
-      Wire.endTransmission();
-
-      Wire.beginTransmission(TCS_ADDR);
-      Wire.write(0x80 | 0x0F); // Control (Gain 4x)
-      Wire.write(0x01);
-      Wire.endTransmission();
-
-      found = true;
-      break; 
-    }
-  }
-
-  if (!found) {
-    Serial.println("ERROR: TCS34725 not found on any channel!");
-    while (1);
-  }
+  Serial.println(F("\n--- MUX SCAN ---"));
+  if (!present(TCA_ADDR)) Serial.println(F("!! TCA9548A not found at 0x70 - check SDA/SCL/power"));
 }
 
+unsigned long lastScan = 0;
+
 void loop() {
-  // Loop through channels to read the sensor wherever it's located
-  for (uint8_t i = 0; i < 8; i++) {
-    tcaselect(i);
-    Wire.beginTransmission(TCS_ADDR);
-    if (Wire.endTransmission() == 0) {
-      // Read 8 bytes starting from CDATAL (0x14)
-      Wire.beginTransmission(TCS_ADDR);
-      Wire.write(0x80 | 0x14);
-      Wire.endTransmission();
-
-      Wire.requestFrom((uint8_t)TCS_ADDR, (uint8_t)8);
-      if (Wire.available() >= 8) {
-        uint16_t clear = Wire.read() | (Wire.read() << 8);
-        uint16_t red   = Wire.read() | (Wire.read() << 8);
-        uint16_t green = Wire.read() | (Wire.read() << 8);
-        uint16_t blue  = Wire.read() | (Wire.read() << 8);
-
-        Serial.print("Channel "); Serial.print(i);
-        Serial.print(" | Clear: "); Serial.print(clear);
-        Serial.print(" Red: "); Serial.print(red);
-        Serial.print(" Green: "); Serial.print(green);
-        Serial.print(" Blue: "); Serial.println(blue);
-      }
-    }
+  if (lastScan == 0 || millis() - lastScan >= 3000) {
+    lastScan = millis();
+    Serial.println(F("---- scan ----"));
+    scanChannel(-1);
+    for (int ch = 0; ch < 8; ch++) scanChannel(ch);
+    Serial.println(F("--------------"));
   }
-  delay(500);
+
+  bool any = false;
+  for (int ch = 0; ch < 8; ch++) {
+    if (!tofOn[ch]) continue;
+    any = true;
+    tcaselect(ch);
+    uint16_t mm = tof[ch].readRangeContinuousMillimeters();
+    Serial.print(F("CH")); Serial.print(ch); Serial.print(F(": "));
+    Serial.print(mm); Serial.print(F(" mm"));
+    if (tof[ch].timeoutOccurred()) Serial.print(F(" TIMEOUT"));
+    Serial.print(F("   "));
+  }
+  if (any) Serial.println();
+  delay(200);
 }
