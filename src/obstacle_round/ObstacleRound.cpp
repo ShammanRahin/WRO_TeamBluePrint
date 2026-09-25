@@ -28,6 +28,8 @@
 //     Front ToF down -> the LiDAR front stands in; rear ToF down -> every
 //     reverse leg is capped at half a wheel turn.
 //   - START is refused while the IMU gives no heading.
+//   - TURN_OUTER_FRONT_MM 400 -> 600; the lot straight's lane is
+//     START_LANE_MM (800) wide - the car keeps off the lot blocks every lap.
 //   The obstacle driving itself (planner, corners, REACH, final straight) is
 //   unchanged from v9.
 //
@@ -734,8 +736,25 @@ bool laneOffset(float &off) {
 // breaks exactly where it matters: just after a corner one side looks across
 // the corner square and "fits" a wall 1000+ mm away, which put the gap centre
 // outside the lane (sim: need 546 mm -> spurious BACKOFF).
-float wallLatRight() { return -CORRIDOR_MM / 2; }
-float wallLatLeft()  { return  CORRIDOR_MM / 2; }
+// v10: the parking lot sits along the OUTER wall of the start straight and its
+// blocks stick out LOT_DEPTH_MM. On that straight (the first one, and the one
+// after every 4th corner) the lane is START_LANE_MM wide: the outer wall is
+// treated as that much closer, so centring, sign passing and the reverse
+// checks all keep the car off the blocks. lotSide comes from the park-out
+// (the wall it was parked against): -1 = right, +1 = left, 0 = no lot known.
+       float START_LANE_MM = 800.0;       // usable width on the lot straight (>= CORRIDOR_MM = off)
+int   lotSide = 0;
+bool  onLotStraight() {
+  if (lotSide == 0 || START_LANE_MM >= CORRIDOR_MM) return false;
+  return (cornerCount % 4) == 0;            // the lane frame the planner is in now
+}
+float lotCut() { return onLotStraight() ? CORRIDOR_MM - START_LANE_MM : 0.0f; }
+float wallLatRight() { return -CORRIDOR_MM / 2 + (lotSide < 0 ? lotCut() : 0.0f); }
+float wallLatLeft()  { return  CORRIDOR_MM / 2 - (lotSide > 0 ? lotCut() : 0.0f); }
+// lane limits for the car centre (was +-LANE_LIMIT_MM)
+float laneLo() { return wallLatRight() + CAR_HALF_W_MM + WALL_MARGIN_MM; }
+float laneHi() { return wallLatLeft()  - CAR_HALF_W_MM - WALL_MARGIN_MM; }
+float laneMid() { return 0.5f * (wallLatRight() + wallLatLeft()); }
 
 // One sign from the Pi -> lane frame -> track update, or the next straight's colour.
 void addSighting(const Sighting &s) {
@@ -875,8 +894,8 @@ void passTargets(const PillarTrack &t, float &gap, float &bound) {
                  : 0.5f * ((t.lat + PILLAR_HALF_MM) + wallLatLeft());
   gap = GAP_CENTRE_W * mid;
   gap = pr ? fminf(gap, bound) : fmaxf(gap, bound);
-  gap   = constrain(gap,   -LANE_LIMIT_MM, LANE_LIMIT_MM);
-  bound = constrain(bound, -LANE_LIMIT_MM, LANE_LIMIT_MM);
+  gap   = constrain(gap,   laneLo(), laneHi());
+  bound = constrain(bound, laneLo(), laneHi());
 }
 
 // Clearance for track t from the car's state now, or after reversing
@@ -1061,7 +1080,7 @@ void updatePlanner() {
     if (rel > 0 && rel < nearestAhead) { nearestAhead = rel; nearestIdx = i; }
   }
 
-  float lo = -LANE_LIMIT_MM, hi = LANE_LIMIT_MM;
+  float lo = laneLo(), hi = laneHi();
   float urgentRel = 1e9, urgentBound = 0; int urgentIdx = -1; bool any = false, beside = false;
   for (int i = 0; i < MAX_TRACKS; i++) {
     if (!trackConfirmed(i) || tracks[i].passed) continue;
@@ -1081,7 +1100,7 @@ void updatePlanner() {
   // offset for the first stretch after a corner. A sign in play: the middle of
   // the gap between the most urgent sign's face and the wall on its passing
   // side - or its rule line, once REACH has said the gap is out of reach.
-  float target = 0.0f;
+  float target = laneMid();                              // lane centre (v10: of the 800 mm lot lane)
   if (!any) {
     if (cornerCount > 0 && laneAlongMm < POST_CORNER_BOOST_MM) target = cornerExitCmd;
   } else {
@@ -1111,7 +1130,7 @@ void updatePlanner() {
     reachBad = 0;
   }
 
-  latTarget = constrain(target, -LANE_LIMIT_MM, LANE_LIMIT_MM);
+  latTarget = constrain(target, laneLo(), laneHi());
 
   if (!laneOffOk) { latYawCmd = 0.0f; return; }          // no walls: just hold heading
   // Centring is gentle (CENTRE_YAW_MAX) so the car does not weave; right
@@ -1466,8 +1485,9 @@ void backoffStep() {
 //            same way), until the IMU says 90 deg.
 //   EXIT     straight out, IMU holding the 90 deg heading, until the front
 //            reads EXIT_FRONT_MM (the inner wall).
-//   REALIGN  one full-lock REVERSE arc back to the lot heading (shuffles if
-//            anything stops it early), then the laps start on that heading.
+//   REALIGN  one full-lock REVERSE arc back to the lot heading - reverse
+//            only, never a forward leg; if anything stops it short, the laps
+//            start anyway and the heading hold finishes the turn.
 // A shuffle leg ends at the first of: the front ToF (forward legs) / rear
 // ToF (reverse legs) under PARK_SAFE_MM, the body model closing on a block
 // (PARK_CORNER_MARGIN_MM) or the wall (PARK_WALL_MARGIN_MM), LEG_CAP_CM.
@@ -1476,7 +1496,10 @@ void backoffStep() {
 // coast after every stop), and the wheels swing to the other lock only once
 // the car has stopped.
 // Fallbacks: front ToF down -> the LiDAR front minus LIDAR_TO_FRONT_MM;
-// rear ToF down -> every reverse leg is at most half a wheel turn.
+// rear ToF down -> every PIVOT reverse leg is at most half a wheel turn (the
+// REALIGN arc backs into the open corridor; the body model guards it).
+// Laps: the lot straight is START_LANE_MM (800) wide, so the car stays off
+// the lot blocks on every lap.
 // Anything it cannot handle stops the car: PARK OUT ABORT -> FINISHED.
        bool     PARK_OUT_ENABLE   = true;   // false = START begins the laps at once (v9 behaviour)
        uint16_t PARK_SAFE_MM      = 25;     // front / rear ToF closer than this ends a leg (the lot is
@@ -1622,6 +1645,7 @@ struct PkManeuver {
   int legs, stuck;
   float gLast[PK_NOBS], gTrend[PK_NOBS]; unsigned long gMs;
   float firstCapCm;
+  bool  reverseOnly;                     // v10 REALIGN: one reverse arc, never a forward leg
 } pkm;
 
 float pkFullLock(bool left) { return left ? SERVO_TRUE_STRAIGHT - SERVO_MAX_LEFT : SERVO_MAX_RIGHT - SERVO_TRUE_STRAIGHT; }
@@ -1639,7 +1663,7 @@ void pkLegLock() {
 }
 void pkStartManeuver(const char *name, float target, int rot, int firstDir, float firstCapCm) {
   pkm.name = name; pkm.target = wrapDeg(target); pkm.rot = rot; pkm.dir = firstDir; pkm.firstCapCm = firstCapCm;
-  pkm.legs = 0; pkm.stuck = 0;
+  pkm.legs = 0; pkm.stuck = 0; pkm.reverseOnly = false;
   Serial.print(F("# ")); Serial.print(name); Serial.print(F(": turn "));
   Serial.print(rot > 0 ? F("LEFT") : F("RIGHT")); Serial.print(F(" to heading ")); Serial.print(pkm.target, 1);
   Serial.print(F(" (now ")); Serial.print(gHeading, 1); Serial.print(F("), first leg "));
@@ -1647,7 +1671,7 @@ void pkStartManeuver(const char *name, float target, int rot, int firstDir, floa
   pkLegStop();
 }
 
-// 0 running, 1 done, -1 failed
+// 0 running, 1 done, -1 failed, 2 a reverse-only arc ended early
 int pkManeuverStep() {
   float left = pkDegLeft();
   if (left <= PARK_TOL_DEG) {
@@ -1685,7 +1709,8 @@ int pkManeuverStep() {
   float cap = (pkm.legs == 1 ? pkm.firstCapCm : LEG_CAP_CM);
   if (fwd)               blind = !pkFrontDist(guard, brakeS);
   else if (!rearBlind()) guard = rearMm;
-  else { cap = fminf(cap, pkRearCapCm()); capBlind = true; }
+  else if (!pkm.reverseOnly) { cap = fminf(cap, pkRearCapCm()); capBlind = true; }   // PIVOT: half a wheel turn;
+                                         // the REALIGN arc has the corridor behind it (body model still guards)
   float legCm = absEnc(readEncoder() - pkm.legTicks0) / TICKS_PER_CM;
   // body model: the nearest obstacle this leg is moving TOWARD, each tracked on
   // its own (a block corner can close in while the wall, nearer, opens up)
@@ -1714,6 +1739,7 @@ int pkManeuverStep() {
     if (!blind && guard < TOF_FAR) { Serial.print(fwd ? F(", front ") : F(", rear ")); Serial.print(guard); Serial.print(F(" mm")); }
     Serial.print(F(", body gap ")); Serial.print(fminf(g[0], fminf(g[1], g[2])), 0); Serial.println(F(" mm"));
     if (blind) return -1;
+    if (pkm.reverseOnly) return 2;        // never a forward leg: the caller decides
     pkm.stuck = (turned < 1.0f) ? pkm.stuck + 1 : 0;
     if (pkm.stuck >= PARK_MAX_STUCK_LEGS && pkDegLeft() <= PARK_ACCEPT_DEG) {
       Serial.print(F("# ")); Serial.print(pkm.name); Serial.print(F(" boxed in but only "));
@@ -1816,6 +1842,7 @@ void parkOutStep() {
       uint16_t rMm = rearBlind() ? 0 : rearMm;       // no rear ToF: rear block assumed at the bumper
       if (fMm < PARK_SAFE_MM + 5 && rMm < PARK_SAFE_MM + 5) { pkAbort(F("no room to move (lower PARK_SAFE_MM?)")); return; }
       pkStartHeading = gHeading;
+      lotSide = -pkOpenRot;                          // the lot is on the wall side
       pkPlaceModel(lo, fMm, rMm, fLidar);
       if (rMm > 40 || lo - CAR_HALF_W_MM < 60)
         Serial.println(F("# tip: park at the BACK of the lot and 60+ mm off the wall - most room to turn"));
@@ -1851,6 +1878,7 @@ void parkOutStep() {
         Serial.print(F(" front=")); Serial.print(fMm);
         Serial.print(F(" out cm=")); Serial.println(outCm, 1);
         pkStartManeuver("REALIGN", pkStartHeading, -pkOpenRot, -1, ARC_CAP_CM);   // one full-lock reverse arc
+        pkm.reverseOnly = true;
         pkPhase = PK_REALIGN;
         return;
       }
@@ -1866,6 +1894,10 @@ void parkOutStep() {
     case PK_REALIGN: {
       int r = pkManeuverStep();
       if (r < 0) { pkAbort(F("REALIGN")); return; }
+      if (r == 2) {                                  // the arc was stopped short: no forward legs -
+        Serial.print(F("# REALIGN arc stopped ")); Serial.print(pkDegLeft(), 1);
+        Serial.println(F(" deg short - laps start, the heading hold finishes it"));
+      }
       if (r > 0) {
         setMotorSpeed(0);
         setServoAngle(SERVO_TRUE_STRAIGHT);
@@ -1911,6 +1943,7 @@ void waitStartStep() {
   cornerExitCmd    = 0.0;
   laneOffOk        = false;
   clearTracks();
+  lotSide = 0;                                       // known again once the park-out decides
   if (PARK_OUT_ENABLE) goState(STATE_PARK_OUT);      // v10: out of the lot first
   else                 beginLaps(gHeading);          // v9: laps from where the car stands
 }
@@ -1927,6 +1960,12 @@ void beginLaps(float heading) {
   overdueLogged = false;
   Serial.println(F("# GO"));
   goState(STATE_DRIVE_TO_CORNER);
+}
+
+void logLotStraight() {
+  if (!onLotStraight()) return;
+  Serial.print(F("# lot straight: lane ")); Serial.print((int)START_LANE_MM);
+  Serial.println(lotSide < 0 ? F(" mm, lot on the right") : F(" mm, lot on the left"));
 }
 
 // ============================================================
@@ -1979,9 +2018,12 @@ TurnPlan turnPlan = PLAN_REVERSE;
 // a sign the turn needs on the new lane's inner side
 bool needsInnerOfNewLane(int color) { return color != VIS_NONE && passRight(color) == clockwiseMode; }
 
+void logLotStraight();
+
 void driveStep() {
   if (!entered) {
     entered = true;
+    logLotStraight();
     resetSideCounters();
     resetHeadingPid();
     setMotorSpeed(DRIVE_PWM);
@@ -2079,7 +2121,7 @@ void driveStep() {
 // VIEW      stopped, wheels straight, planner already in the new lane frame,
 //           TURN_VIEW_MS - the camera sees the next straight before the car
 //           commits to a side.
-       uint16_t TURN_OUTER_FRONT_MM = 400;   // PLAN_ARC: arc when the wall ahead is this close
+       uint16_t TURN_OUTER_FRONT_MM = 600;   // PLAN_ARC: arc when the wall ahead is this close (v10: 400 -> 600)
        uint16_t TURN_INNER_FRONT_MM = 200;   // PLAN_REVERSE: reverse arc from this close
        float    TURN_APPROACH_CAP_CM = 150.0; // approach backstop (odometry)
        float    TURN_LOCK_FRACTION = 1.0;    // forward arc: fraction of full lock
@@ -2376,6 +2418,7 @@ const ParamDesc PARAMS[] = {
   PF(SIGHT_MAX_YAW,         G_PLAN,    5,    90),
   PF(PILLAR_MAX_LAT_MM,     G_PLAN,  100,  1000),
   PF(CROSS_MAX_LAT_MM,      G_PLAN,  400,  3000),
+  PF(START_LANE_MM,         G_PLAN,  400,  2000),   // v10: lane width on the lot straight
 
   // ---- passing a sign ----
   PF(PASS_LEAD_MM,          G_PASS,    0,   600),
